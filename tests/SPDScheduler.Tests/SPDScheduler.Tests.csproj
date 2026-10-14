@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/SPDScheduler.Core/SPDScheduler.Core.csproj" />
+    <ProjectReference Include="../../src/SPDScheduler.Windows/SPDScheduler.Windows.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,20 @@
+{
+  "sourceCommit": "",
+  "installerSha256": "",
+  "testedOnOtherPc": false,
+  "powersiVersion": "",
+  "existingPowerSi": false,
+  "failedStartSkip": false,
+  "exitRecovery": false,
+  "ownershipIsolation": false,
+  "workflows": [
+    {
+      "name": "",
+      "gui": false,
+      "start": false,
+      "completion": false,
+      "save": false,
+      "close": false
+    }
+  ]
+}

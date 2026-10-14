@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>SPDScheduler</AssemblyName>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Product>SPD Scheduler</Product>
+    <Description>PowerSI simulation queue and scheduler</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../SPDScheduler.Core/SPDScheduler.Core.csproj" />
+    <ProjectReference Include="../SPDScheduler.Windows/SPDScheduler.Windows.csproj" />
+  </ItemGroup>
+</Project>
