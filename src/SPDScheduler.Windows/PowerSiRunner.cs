@@ -47,7 +47,7 @@ public sealed class PowerSiRunner : IPowerSiRunner
         {
             WorkingDirectory = Path.GetDirectoryName(spd)!, UseShellExecute = false, CreateNoWindow = false
         };
-        // shortcut: GUI -tcl startup is unverified, enable real scheduling only after the separate-PC release gate.
+        // shortcut: GUI -tcl startup is unverified; validate it on a separately authorized PC.
         start.ArgumentList.Add("-tcl");
         start.ArgumentList.Add(script);
         // Native per-run log files survive scheduler exit without a redirected pipe dependency.

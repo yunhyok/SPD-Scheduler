@@ -4,7 +4,7 @@ param([string]$DotnetPath)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$version = '0.1.0'
+$version = '0.1.1'
 if (-not $DotnetPath) {
     $bundledDotnet = Join-Path $repoRoot '.tools/dotnet/dotnet.exe'
     $DotnetPath = if (Test-Path -LiteralPath $bundledDotnet) { $bundledDotnet } else { 'dotnet' }
@@ -39,6 +39,14 @@ try {
     if (Test-Path -LiteralPath $publishDir) { Remove-Item -LiteralPath $publishDir -Recurse -Force }
     & $dotnet publish src/SPDScheduler.App/SPDScheduler.App.csproj --configuration Release --runtime win-x64 --self-contained true '-p:PublishSingleFile=true' '-p:IncludeNativeLibrariesForSelfExtract=true' '-p:DebugType=None' '-p:DebugSymbols=false' --output $publishDir
     if ($LASTEXITCODE -ne 0) { throw "Publish failed ($LASTEXITCODE)." }
+    & $dotnet publish src/SPDScheduler.StatusReader/SPDScheduler.StatusReader.csproj --configuration Release --runtime win-x64 --self-contained true '-p:PublishSingleFile=true' '-p:IncludeNativeLibrariesForSelfExtract=true' '-p:DebugType=None' '-p:DebugSymbols=false' --output $publishDir
+    if ($LASTEXITCODE -ne 0) { throw "Status reader publish failed ($LASTEXITCODE)." }
+    $readerPath = Join-Path $publishDir 'SPDScheduler.StatusReader.exe'
+    $readerBytes = [IO.File]::ReadAllBytes($readerPath)
+    $peOffset = [BitConverter]::ToInt32($readerBytes, 0x3c)
+    if ([BitConverter]::ToUInt16($readerBytes, $peOffset + 24 + 68) -ne 3) {
+        throw 'The published status reader must use the console subsystem to avoid GUI startup cursor feedback.'
+    }
     & $iscc "/DAppVersion=$version" installer/SPDScheduler.iss
     if ($LASTEXITCODE -ne 0) { throw "Installer compilation failed ($LASTEXITCODE)." }
 

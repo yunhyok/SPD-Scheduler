@@ -1,6 +1,7 @@
 <Solution>
   <Project Path="src/SPDScheduler.Core/SPDScheduler.Core.csproj" />
   <Project Path="src/SPDScheduler.Windows/SPDScheduler.Windows.csproj" />
+  <Project Path="src/SPDScheduler.StatusReader/SPDScheduler.StatusReader.csproj" />
   <Project Path="src/SPDScheduler.App/SPDScheduler.App.csproj" />
   <Project Path="tests/SPDScheduler.Tests/SPDScheduler.Tests.csproj" />
 </Solution>

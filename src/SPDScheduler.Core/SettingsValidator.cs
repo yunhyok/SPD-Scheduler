@@ -7,10 +7,10 @@ public static class SettingsValidator
     public static void Validate(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        if (settings.IdleSeconds is < 10 or > 86400 || !double.IsFinite(settings.IdleCpuPercent) ||
+        if (settings.PollIntervalMinutes is < 1 or > 60 || settings.IdleSeconds is < 10 or > 86400 || !double.IsFinite(settings.IdleCpuPercent) ||
             settings.IdleCpuPercent is <= 0 or > 100 || settings.IdleMemoryMiB is < 0 or > 1048576 ||
             settings.IdleIoKiBPerSecond is < 0 or > 1048576 || settings.StartTimeoutMinutes is < 1 or > 1440)
-            throw new ArgumentException("유휴 시간(10~86400초), CPU(0 초과~100%), 메모리/I/O(0 이상), 시작 대기(1~1440분)를 확인하세요.");
+            throw new ArgumentException("확인 간격(1~60분), 유휴 시간(10~86400초), CPU(0 초과~100%), 메모리/I/O(0 이상), 시작 대기(1~1440분)를 확인하세요.");
         if (settings.CompletionRules is null) throw new ArgumentException("완료 규칙 목록이 없습니다.");
         foreach (var rule in settings.CompletionRules)
         {

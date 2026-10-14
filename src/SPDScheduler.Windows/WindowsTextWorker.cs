@@ -72,8 +72,7 @@ public static class WindowsTextWorker
 
     internal static async Task<string?> ReadAsync(ProcessIdentity identity, CancellationToken cancellationToken)
     {
-        var executable = Environment.ProcessPath;
-        if (executable == null || Path.GetFileNameWithoutExtension(executable).Equals("dotnet", StringComparison.OrdinalIgnoreCase)) return null;
+        var executable = ResolveExecutable(AppContext.BaseDirectory);
         var start = new ProcessStartInfo(executable)
         {
             UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
@@ -88,7 +87,8 @@ public static class WindowsTextWorker
         deadline.CancelAfter(TimeSpan.FromSeconds(3));
         try
         {
-            if (!worker.Start()) return null;
+            if (!worker.Start()) throw new IOException("PowerSI status reader could not start.");
+            var error = worker.StandardError.BaseStream.CopyToAsync(Stream.Null, deadline.Token);
             var output = new StringBuilder();
             var buffer = new char[2048];
             int length;
@@ -98,17 +98,26 @@ public static class WindowsTextWorker
                 output.Append(buffer, 0, length);
             }
             await worker.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
-            return worker.ExitCode == 0 ? Encoding.UTF8.GetString(Convert.FromBase64String(output.ToString())) : null;
+            await error.ConfigureAwait(false);
+            if (worker.ExitCode is >= 2 and <= 6) return null;
+            if (worker.ExitCode != 0) throw new IOException($"PowerSI status reader is unavailable (exit {worker.ExitCode}). Reinstall the complete SPD Scheduler package.");
+            return Encoding.UTF8.GetString(Convert.FromBase64String(output.ToString()));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return null; }
-        catch (System.ComponentModel.Win32Exception) { return null; }
-        catch (IOException) { return null; }
+        catch (System.ComponentModel.Win32Exception exception) { throw new IOException("PowerSI status reader could not start. Reinstall the complete SPD Scheduler package.", exception); }
         catch (FormatException) { return null; }
         finally
         {
             // This is our read-only helper, never the Cadence process.
             try { if (!worker.HasExited) worker.Kill(); } catch (InvalidOperationException) { } catch (System.ComponentModel.Win32Exception) { }
         }
+    }
+
+    internal static string ResolveExecutable(string baseDirectory)
+    {
+        string executable = Path.Combine(baseDirectory, "SPDScheduler.StatusReader.exe");
+        if (!File.Exists(executable)) throw new FileNotFoundException("PowerSI status reader is missing. Reinstall the complete SPD Scheduler package.", executable);
+        return executable;
     }
 
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);

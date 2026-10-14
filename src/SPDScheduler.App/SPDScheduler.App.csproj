@@ -9,9 +9,11 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Product>SPD Scheduler</Product>
     <Description>PowerSI simulation queue and scheduler</Description>
+    <CopyStatusReader>true</CopyStatusReader>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../SPDScheduler.Core/SPDScheduler.Core.csproj" />
     <ProjectReference Include="../SPDScheduler.Windows/SPDScheduler.Windows.csproj" />
+    <ProjectReference Include="../SPDScheduler.StatusReader/SPDScheduler.StatusReader.csproj" ReferenceOutputAssembly="false" StatusReader="true" />
   </ItemGroup>
 </Project>

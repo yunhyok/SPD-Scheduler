@@ -8,7 +8,6 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        if (WindowsTextWorker.TryRun(args) is int result) return result;
         ApplicationConfiguration.Initialize();
         bool safeMode = args.Contains("--safe-mode", StringComparer.OrdinalIgnoreCase);
         bool show = args.Contains("--show", StringComparer.OrdinalIgnoreCase);

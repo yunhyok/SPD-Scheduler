@@ -36,6 +36,7 @@ internal static class SchedulerTests
         yield return ("Missing queued file fails safely before launch", MissingFile);
         yield return ("Only SPD files enter the queue", RejectNonSpd);
         yield return ("Queue persists schedules and workflow rules", PersistenceRoundTrip);
+        yield return ("Existing settings default to one-minute polling", LegacyPollingDefault);
         yield return ("Failed persistence leaves the previous queue intact", FailedSavePreservesState);
         yield return ("Corrupt state is preserved and rejected", CorruptState);
         yield return ("Unsupported schema is preserved and rejected", UnsupportedSchema);
@@ -486,7 +487,7 @@ internal static class SchedulerTests
         var at = new DateTimeOffset(2026, 10, 14, 14, 30, 0, TimeSpan.FromHours(9));
         var job = new JobItem { FilePath = rig.CreateFile("문자 } [한글] $ fixture.spd"), ScheduledAt = at,
             ScheduleTimeZone = "Korea Standard Time", Order = 4 };
-        var document = new QueueDocument { Jobs = [job], Settings = new AppSettings { CompletionRules =
+        var document = new QueueDocument { Jobs = [job], Settings = new AppSettings { PollIntervalMinutes = 5, CompletionRules =
             [new() { Workflow = "extraction", SpdPattern = "extraction", StartedPattern = "start-a", CompletedPattern = "done-a" },
              new() { Workflow = "another-mode", SpdPattern = "another", StartedPattern = "start-b", CompletedPattern = "done-b" }] } };
         rig.Store.Save(document);
@@ -497,6 +498,16 @@ internal static class SchedulerTests
         Check.Equal(at, loaded.Jobs.Single().ScheduledAt!.Value, "Schedule instant must survive storage");
         Check.Equal(5L, loaded.Jobs.Single().Order, "Second atomic save must replace the first document");
         Check.Equal(2, loaded.Settings.CompletionRules.Count, "All workflow modes must survive storage");
+        Check.Equal(5, loaded.Settings.PollIntervalMinutes, "Polling interval must survive storage");
+        return Task.CompletedTask;
+    }
+
+    private static Task LegacyPollingDefault()
+    {
+        using var rig = new TestRig();
+        File.WriteAllText(rig.Store.QueuePath, "{\"SchemaVersion\":1,\"Jobs\":[],\"Settings\":{}}");
+        Check.Equal(1, rig.Store.Load().Settings.PollIntervalMinutes,
+            "Upgrading an existing queue must default to minute polling without manual edits");
         return Task.CompletedTask;
     }
 
@@ -546,6 +557,7 @@ internal static class SchedulerTests
         await rig.InitializeAsync();
         foreach (var invalid in new AppSettings[]
         {
+            new() { PollIntervalMinutes = 0 }, new() { PollIntervalMinutes = 61 },
             new() { IdleSeconds = 0 }, new() { IdleCpuPercent = double.NaN },
             new() { IdleMemoryMiB = -1 }, new() { IdleIoKiBPerSecond = -1 }, new() { StartTimeoutMinutes = 0 }
         })

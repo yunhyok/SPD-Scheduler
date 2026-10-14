@@ -49,6 +49,7 @@ public sealed class CompletionRule
 public sealed class AppSettings
 {
     public string PowerSiPath { get; set; } = "";
+    public int PollIntervalMinutes { get; set; } = 1;
     public int IdleSeconds { get; set; } = 180;
     public double IdleCpuPercent { get; set; } = 1;
     public int IdleMemoryMiB { get; set; } = 16;

@@ -8,7 +8,7 @@ internal sealed class SchedulerContext : ApplicationContext
     private readonly SchedulerEngine engine;
     private readonly MainForm window;
     private readonly NotifyIcon tray;
-    private readonly System.Windows.Forms.Timer ticker = new() { Interval = 2000 };
+    private readonly System.Windows.Forms.Timer ticker = new() { Interval = 60_000 };
     private readonly CancellationTokenSource stopping = new();
     private readonly SemaphoreSlim engineGate = new(1, 1);
     private readonly RegisteredWaitHandle showRegistration;
@@ -72,6 +72,8 @@ internal sealed class SchedulerContext : ApplicationContext
             {
                 if (!window.IsDisposed)
                 {
+                    int interval = engine.Settings.PollIntervalMinutes * 60_000;
+                    if (ticker.Interval != interval) ticker.Interval = interval;
                     window.RefreshQueue();
                     string status = engine.StatusText;
                     string text = "SPD Scheduler · " + status;

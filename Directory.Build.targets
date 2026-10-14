@@ -1,0 +1,14 @@
+<Project>
+  <Target Name="CopyStatusReaderFiles" AfterTargets="Build" Condition="'$(CopyStatusReader)' == 'true'">
+    <MSBuild Projects="@(ProjectReference->WithMetadataValue('StatusReader', 'true'))" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="_StatusReaderTarget" />
+    </MSBuild>
+    <PropertyGroup>
+      <_StatusReaderDirectory>@(_StatusReaderTarget->'%(RootDir)%(Directory)')</_StatusReaderDirectory>
+    </PropertyGroup>
+    <ItemGroup>
+      <_StatusReaderFiles Include="$(_StatusReaderDirectory)SPDScheduler.StatusReader.exe;$(_StatusReaderDirectory)SPDScheduler.StatusReader.dll;$(_StatusReaderDirectory)SPDScheduler.StatusReader.deps.json;$(_StatusReaderDirectory)SPDScheduler.StatusReader.runtimeconfig.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_StatusReaderFiles)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

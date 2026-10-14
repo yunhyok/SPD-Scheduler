@@ -38,7 +38,7 @@ public sealed class IdleGate
             return new(false, false, "PowerSI 유휴 상태를 관측합니다.");
         }
         var seconds = (current.CapturedAt - _previous.CapturedAt).TotalSeconds;
-        if (seconds <= 0 || seconds > 10)
+        if (seconds <= 0 || seconds > settings.PollIntervalMinutes * 60 + 10)
         {
             Reset();
             _previous = current;

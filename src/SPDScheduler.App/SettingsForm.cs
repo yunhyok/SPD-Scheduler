@@ -12,6 +12,7 @@ internal sealed class SettingsForm : Form
     private readonly NumericUpDown memory;
     private readonly NumericUpDown io;
     private readonly NumericUpDown timeout;
+    private readonly NumericUpDown polling;
     private readonly DataGridView rules;
     public AppSettings? Result { get; private set; }
 
@@ -75,6 +76,7 @@ internal sealed class SettingsForm : Form
         memory = AddNumber(thresholds, "메모리 변화 한도 (MiB)", current.IdleMemoryMiB, 0, 1048576, 0, 1);
         io = AddNumber(thresholds, "I/O 한도 (KiB/s)", current.IdleIoKiBPerSecond, 0, 1048576, 2, 1);
         timeout = AddNumber(thresholds, "시작 제한 시간 (분)", current.StartTimeoutMinutes, 1, 1440, 0, 2);
+        polling = AddNumber(thresholds, "확인 간격 (분)", current.PollIntervalMinutes, 1, 60, 2, 2);
         root.Controls.Add(thresholds, 0, 2);
         root.Controls.Add(new Label
         {
@@ -139,7 +141,8 @@ internal sealed class SettingsForm : Form
             }
             Result = new AppSettings
             {
-                PowerSiPath = path, IdleSeconds = (int)idleSeconds.Value, IdleCpuPercent = (double)cpu.Value,
+                PowerSiPath = path, PollIntervalMinutes = (int)polling.Value,
+                IdleSeconds = (int)idleSeconds.Value, IdleCpuPercent = (double)cpu.Value,
                 IdleMemoryMiB = (int)memory.Value, IdleIoKiBPerSecond = (int)io.Value,
                 StartTimeoutMinutes = (int)timeout.Value, CompletionRules = completedRules
             };

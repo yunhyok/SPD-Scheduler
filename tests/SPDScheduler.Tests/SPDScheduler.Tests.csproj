@@ -1,7 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <CopyStatusReader>true</CopyStatusReader>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/SPDScheduler.Core/SPDScheduler.Core.csproj" />
     <ProjectReference Include="../../src/SPDScheduler.Windows/SPDScheduler.Windows.csproj" />
+    <ProjectReference Include="../../src/SPDScheduler.StatusReader/SPDScheduler.StatusReader.csproj" ReferenceOutputAssembly="false" StatusReader="true" />
   </ItemGroup>
 </Project>

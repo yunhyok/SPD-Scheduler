@@ -20,6 +20,8 @@ internal static class IdleGateTests
         yield return Test("Incomplete and inaccessible snapshots reset idle inference", MissingAccess);
         yield return Test("PID reuse and process-set changes reset idle inference", IdentityChanges);
         yield return Test("Long sampling gaps reset idle inference", SampleGap);
+        yield return Test("Minute polling accumulates the configured idle interval", MinutePolling);
+        yield return Test("Minute polling rejects missed observations", MissedMinutePolling);
         yield return Test("Backward process counters reset idle inference", CounterReset);
         yield return Test("Explicit running/suspended/license/error evidence blocks idle", BusySignals);
         yield return Test("Exclusions compare complete identities rather than PID alone", ExactExclusion);
@@ -147,8 +149,34 @@ internal static class IdleGateTests
     {
         var gate = new IdleGate();
         QuietUntil(gate, 178);
-        Check.That(!At(gate, 240, [Sample()]).CanStart, "A monitoring outage cannot count as quiet time");
-        Check.That(!At(gate, 242, [Sample()]).CanStart, "Observation restarts after the gap");
+        Check.That(!At(gate, 250, [Sample()]).CanStart, "A monitoring outage cannot count as quiet time");
+        Check.That(!At(gate, 252, [Sample()]).CanStart, "Observation restarts after the gap");
+    }
+
+    private static void MinutePolling()
+    {
+        foreach (int minutes in new[] { 1, 5 })
+        {
+            var settings = new AppSettings { PollIntervalMinutes = minutes, IdleSeconds = minutes * 180 };
+            var gate = new IdleGate();
+            for (int sample = 0; sample <= 3; sample++)
+            {
+                int seconds = sample * minutes * 60;
+                var result = gate.Evaluate(new ProcessSnapshot(Epoch.AddSeconds(seconds),
+                    [Sample(cpu: seconds * 0.005, io: (ulong)seconds * 1024)]), settings);
+                Check.Equal(sample == 3, result.CanStart,
+                    "Low CPU/I/O across real minute intervals must accumulate without an artificial gap reset");
+            }
+        }
+    }
+
+    private static void MissedMinutePolling()
+    {
+        var settings = new AppSettings { PollIntervalMinutes = 5, IdleSeconds = 900 };
+        var gate = new IdleGate();
+        foreach (int seconds in new[] { 0, 300, 600, 1200 })
+            Check.That(!gate.Evaluate(new ProcessSnapshot(Epoch.AddSeconds(seconds), [Sample()]), settings).CanStart,
+                "A missed five-minute observation must reset accumulated idle time");
     }
 
     private static void CounterReset()
