@@ -19,9 +19,9 @@ public sealed class WindowsProcessProbe : IProcessProbe
             if (!IsPowerSi(samples[i].Identity.ImagePath)) continue;
             var status = await WindowsTextWorker.ReadAsync(samples[i].Identity, cancellationToken).ConfigureAwait(false);
             var signal = ClassifyStatus(status);
-            samples[i] = samples[i] with { Signal = signal, Evidence = signal == ProcessSignal.None ? null : status };
+            samples[i] = samples[i] with { Signal = signal, Evidence = StatusEvidence(status) };
         }
-        return snapshot with { Processes = samples };
+        return snapshot with { Processes = samples, ObservationDuration = DateTimeOffset.UtcNow - snapshot.CapturedAt };
     }
 
     internal static ProcessSignal ClassifyStatus(string? status)
@@ -29,11 +29,25 @@ public sealed class WindowsProcessProbe : IProcessProbe
         if (string.IsNullOrWhiteSpace(status)) return ProcessSignal.None;
         if (status.Contains("suspended", StringComparison.OrdinalIgnoreCase)) return ProcessSignal.Suspended;
         if (status.Contains("license", StringComparison.OrdinalIgnoreCase)) return ProcessSignal.LicenseWaiting;
-        var lines = status.Split('\n');
-        if (lines.Any(line => line.Contains("Simulation", StringComparison.OrdinalIgnoreCase) &&
-            !line.Trim().Equals("Simulation Done.", StringComparison.Ordinal))) return ProcessSignal.Running;
-        if (lines.Any(line => line.Trim().Equals("Simulation Done.", StringComparison.Ordinal))) return ProcessSignal.Completed;
+        var lines = status.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (lines.Any(line => line.StartsWith("Error:", StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith("Simulation failed", StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith("Solver failed", StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith("Insufficient memory", StringComparison.OrdinalIgnoreCase))) return ProcessSignal.Error;
+        if (lines.Any(line => line.Equals("Busy", StringComparison.OrdinalIgnoreCase) ||
+            line.Equals("Busy.", StringComparison.OrdinalIgnoreCase) ||
+            line.Contains("Simulation", StringComparison.OrdinalIgnoreCase) &&
+            !line.Equals("Simulation Done.", StringComparison.Ordinal))) return ProcessSignal.Running;
+        if (lines.Any(line => line.Equals("Simulation Done.", StringComparison.Ordinal))) return ProcessSignal.Completed;
         return ProcessSignal.None;
+    }
+
+    internal static string StatusEvidence(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status)) return "상태 표시줄 읽기 실패/지원되지 않음";
+        var clean = new string(status.Where(character => !char.IsControl(character) || character == '\n').ToArray());
+        var value = string.Join('\n', clean.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Take(16));
+        return value.Length > 1024 ? value[..1024] : value;
     }
 
     private ProcessSnapshot Capture(CancellationToken cancellationToken)

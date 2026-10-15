@@ -48,11 +48,12 @@ public sealed class CompletionRule
 
 public sealed class AppSettings
 {
+    public int ResourcePolicyVersion { get; set; } = 1;
     public string PowerSiPath { get; set; } = "";
     public int PollIntervalMinutes { get; set; } = 1;
-    public int IdleSeconds { get; set; } = 180;
-    public double IdleCpuPercent { get; set; } = 1;
-    public int IdleMemoryMiB { get; set; } = 16;
+    public int IdleSeconds { get; set; } = 60;
+    public double IdleCpuPercent { get; set; } = 50;
+    public int IdleMemoryMiB { get; set; } = 128;
     public int IdleIoKiBPerSecond { get; set; } = 64;
     public int StartTimeoutMinutes { get; set; } = 10;
     public List<CompletionRule> CompletionRules { get; set; } = [];
@@ -74,7 +75,7 @@ public sealed record ProcessSample(
 
 public sealed record ProcessSnapshot(DateTimeOffset CapturedAt,
     IReadOnlyList<ProcessSample> Processes, bool Complete = true, string? Error = null,
-    int LogicalProcessorCount = 1);
+    int LogicalProcessorCount = 1, TimeSpan ObservationDuration = default);
 
 public sealed record GateDecision(bool CanStart, bool InferredIdle, string Reason);
 

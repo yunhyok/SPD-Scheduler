@@ -28,46 +28,88 @@ public static class WindowsTextWorker
             GetWindowThreadProcessId(window, out uint actualPid);
             if (actualPid != (uint)pid || IsHungAppWindow(window)) return 4;
             var text = new List<string>();
+            var nativeBars = new Dictionary<IntPtr, int>();
             int nativeCount = 0;
+            bool enumerationComplete = true;
             EnumChildWindows(window, (child, ignored) =>
             {
-                if (++nativeCount > 2048) return false;
+                if (++nativeCount > 2048) { enumerationComplete = false; return false; }
+                GetWindowThreadProcessId(child, out uint childPid);
+                if (childPid != (uint)pid) return true;
                 var className = new StringBuilder(256);
                 GetClassName(child, className, className.Capacity);
                 if (!className.ToString().Equals("msctls_statusbar32", StringComparison.OrdinalIgnoreCase)) return true;
+                // SB_GETPARTS with no buffer returns only a count; SB_GETTEXT needs target-process memory.
+                if (SendMessageTimeout(child, 0x0406, UIntPtr.Zero, IntPtr.Zero, 0x23, 150, out var parts) == IntPtr.Zero || parts.ToUInt64() > 64)
+                { enumerationComplete = false; return false; }
+                nativeBars[child] = (int)parts.ToUInt64();
+                if (nativeBars.Count > 16) { enumerationComplete = false; return false; }
                 var value = new StringBuilder(1025);
                 if (SendMessageTimeout(child, 0x000D, new UIntPtr((uint)value.Capacity), value, 0x23, 150, out _) != IntPtr.Zero && value.Length > 0)
-                    text.Add(value.ToString().Trim());
-                return text.Count < 64;
-            }, IntPtr.Zero);
-            try
-            {
-                var root = AutomationElement.FromHandle(window);
-                var bars = root.FindAll(TreeScope.Descendants,
-                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.StatusBar));
-                if (bars.Count > 16) return 5;
-                for (int i = 0; i < bars.Count; i++)
                 {
-                    Add(bars[i]);
-                    var children = bars[i].FindAll(TreeScope.Children, Condition.TrueCondition);
-                    if (children.Count > 64) return 5;
-                    for (int j = 0; j < children.Count; j++) Add(children[j]);
+                    if (value.Length == value.Capacity - 1) { enumerationComplete = false; return false; }
+                    text.Add(value.ToString());
                 }
+                return true;
+            }, IntPtr.Zero);
+            if (!enumerationComplete) return 5;
+            foreach (var bar in nativeBars)
+                ReadBar(AutomationElement.FromHandle(bar.Key), bar.Value);
+            var root = AutomationElement.FromHandle(window);
+            var bars = root.FindAll(TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.StatusBar));
+            if (bars.Count > 16) return 5;
+            for (int i = 0; i < bars.Count; i++)
+            {
+                if (!nativeBars.ContainsKey(new IntPtr(bars[i].Current.NativeWindowHandle))) ReadBar(bars[i], 0);
             }
-            catch (ElementNotAvailableException) { }
-            catch (InvalidOperationException) { }
+            var status = NormalizeStatusText(text);
+            if (status == null) return 5;
             if (!WindowsProcessProbe.IdentityMatches(identity)) return 3;
-            Console.Write(Convert.ToBase64String(Encoding.UTF8.GetBytes(string.Join('\n', text.Distinct()))));
+            Console.Write(Convert.ToBase64String(Encoding.UTF8.GetBytes(status)));
             return 0;
+
+            void ReadBar(AutomationElement bar, int parts)
+            {
+                if (bar.Current.ProcessId != pid) throw new InvalidDataException("Status bar ownership changed.");
+                var children = bar.FindAll(TreeScope.Children, Condition.TrueCondition);
+                if (children.Count > 64 || parts > 1 && children.Count < parts)
+                    throw new InvalidDataException("Status bar panes could not be completely read.");
+                // Parent text can concatenate the same panes; read the individual current values when available.
+                if (children.Count == 0) Add(bar);
+                for (int i = 0; i < children.Count; i++) Add(children[i]);
+            }
 
             void Add(AutomationElement element)
             {
-                if (element.Current.ProcessId != pid) return;
-                var name = element.Current.Name;
-                if (!string.IsNullOrWhiteSpace(name) && name.Length <= 1024 && text.Count < 64) text.Add(name.Trim());
+                if (element.Current.ProcessId != pid) throw new InvalidDataException("Status pane ownership changed.");
+                AddValue(element.Current.Name);
+                if (element.TryGetCurrentPattern(ValuePattern.Pattern, out var value)) AddValue(((ValuePattern)value).Current.Value);
+                if (element.TryGetCurrentPattern(TextPattern.Pattern, out var range)) AddValue(((TextPattern)range).DocumentRange.GetText(1025));
+            }
+
+            void AddValue(string? value)
+            {
+                if (string.IsNullOrWhiteSpace(value)) return;
+                if (value.Length > 1024) throw new InvalidDataException("Status pane text was truncated.");
+                if (!text.Contains(value)) text.Add(value);
+                if (text.Count > 64) throw new InvalidDataException("Too many status values.");
             }
         }
         catch { return 6; }
+    }
+
+    internal static string? NormalizeStatusText(IEnumerable<string?> values)
+    {
+        var lines = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var value in values)
+        {
+            if (value == null) continue;
+            if (value.Length > 1024 || value.Any(character => char.IsControl(character) && character is not '\r' and not '\n' and not '\t')) return null;
+            foreach (var line in value.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+                if (lines.Add(line) && lines.Count > 64) return null;
+        }
+        return string.Join('\n', lines);
     }
 
     internal static async Task<string?> ReadAsync(ProcessIdentity identity, CancellationToken cancellationToken)
@@ -127,4 +169,6 @@ public static class WindowsTextWorker
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder name, int length);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageTimeoutW")]
     private static extern IntPtr SendMessageTimeout(IntPtr window, uint message, UIntPtr wParam, StringBuilder text, uint flags, uint timeout, out UIntPtr result);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageTimeoutW")]
+    private static extern IntPtr SendMessageTimeout(IntPtr window, uint message, UIntPtr wParam, IntPtr buffer, uint flags, uint timeout, out UIntPtr result);
 }

@@ -12,6 +12,7 @@ internal static class SchedulerTests
         yield return ("Reschedule during launch preflight defers the selected job", () => ChangesDuringPreflight("schedule"));
         yield return ("Final idle check allows activity below the configured threshold", () => FreshIdleCheck(false));
         yield return ("Final idle check blocks newly busy external PowerSI", () => FreshIdleCheck(true));
+        yield return ("Same-timestamp final capture preserves completed idle observation", SameTimestampPreflight);
         yield return ("Due schedules precede FIFO and future jobs wait", ScheduledPriority);
         yield return ("Unscheduled jobs run in insertion order", FifoOrder);
         yield return ("A newly due job never preempts an owned run", NoPreemption);
@@ -132,6 +133,7 @@ internal static class SchedulerTests
         using var rig = new TestRig();
         await rig.InitializeAsync();
         rig.Engine.Settings.IdleSeconds = 10;
+        rig.Engine.Settings.IdleCpuPercent = 1;
         rig.Add("after-external.spd");
         var identity = new ProcessIdentity(5000, rig.Clock.Now, @"C:\SyntheticOnly\PowerSI.exe");
         rig.Probe.BeforeCaptureAsync = capture =>
@@ -146,6 +148,26 @@ internal static class SchedulerTests
         await rig.TickAsync(6);
         Check.Equal(becomesBusy ? 0 : 1, rig.Runner.Launched.Count,
             "Launch preflight must reuse the configured resource thresholds");
+    }
+
+    private static async Task SameTimestampPreflight()
+    {
+        using var rig = new TestRig();
+        await rig.InitializeAsync();
+        rig.Engine.Settings.IdleSeconds = 10;
+        rig.Engine.Settings.IdleCpuPercent = 1;
+        rig.Add("immediate-preflight.spd");
+        var identity = new ProcessIdentity(5000, rig.Clock.Now, @"C:\SyntheticOnly\PowerSI.exe");
+        rig.Probe.BeforeCaptureAsync = capture =>
+        {
+            if (capture <= 6) rig.Clock.Advance(TimeSpan.FromSeconds(2));
+            rig.Probe.Processes.Clear();
+            rig.Probe.Processes.Add(new ProcessSample(identity, 0, capture <= 6 ? 10 : 10.016, 1024, 0));
+            return Task.CompletedTask;
+        };
+        rig.Engine.Start();
+        await rig.TickAsync(6);
+        Check.Equal(1, rig.Runner.Launched.Count, "An immediate confirmation and one counter quantum must not restart the idle interval");
     }
 
     private static async Task NoPreemption()
@@ -565,6 +587,6 @@ internal static class SchedulerTests
         {
             Check.Throws<ArgumentException>(() => rig.Engine.UpdateSettings(invalid), "Invalid thresholds must be rejected");
         }
-        Check.Equal(180, rig.Engine.Settings.IdleSeconds, "Rejected settings must not replace valid settings");
+        Check.Equal(60, rig.Engine.Settings.IdleSeconds, "Rejected settings must not replace valid settings");
     }
 }

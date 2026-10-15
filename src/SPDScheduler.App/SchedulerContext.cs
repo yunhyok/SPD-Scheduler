@@ -15,16 +15,17 @@ internal sealed class SchedulerContext : ApplicationContext
     private bool exiting;
     private bool tickPending;
     private bool initialized;
+    private DateTimeOffset? nextCheckAt;
 
     public SchedulerContext(QueueStore store, bool safeMode, bool show, EventWaitHandle signal)
     {
         engine = new SchedulerEngine(store, safeMode ? new SafeModeRunner() : new PowerSiRunner(),
             safeMode ? new SafeModeProbe() : new WindowsProcessProbe());
-        window = new MainForm(engine, safeMode, RunCommandAsync, store.DataDirectory);
+        window = new MainForm(engine, safeMode, RunCommandAsync, TickAsync, store.DataDirectory);
         _ = window.Handle;
         var menu = new ContextMenuStrip();
         menu.Items.Add("창 열기", null, (_, _) => window.Reveal());
-        menu.Items.Add("대기열 시작", null, async (_, _) => await RunCommandAsync(engine.Start));
+        menu.Items.Add("대기열 시작", null, async (_, _) => { await RunCommandAsync(engine.Start); if (engine.IsArmed) await TickAsync(); });
         menu.Items.Add("일시 중지", null, async (_, _) => await RunCommandAsync(engine.Pause));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("종료", null, async (_, _) => await ExitAsync());
@@ -45,6 +46,8 @@ internal sealed class SchedulerContext : ApplicationContext
             if (!initialized) { await ExitAsync(); return; }
             if (exiting) return;
             ticker.Start();
+            nextCheckAt = DateTimeOffset.Now.AddMilliseconds(ticker.Interval);
+            window.RefreshQueue(nextCheckAt);
             if (show) window.Reveal();
         }));
     }
@@ -73,8 +76,17 @@ internal sealed class SchedulerContext : ApplicationContext
                 if (!window.IsDisposed)
                 {
                     int interval = engine.Settings.PollIntervalMinutes * 60_000;
-                    if (ticker.Interval != interval) ticker.Interval = interval;
-                    window.RefreshQueue();
+                    if (ticker.Interval != interval)
+                    {
+                        ticker.Interval = interval;
+                        if (ticker.Enabled)
+                        {
+                            ticker.Stop();
+                            ticker.Start();
+                            nextCheckAt = DateTimeOffset.Now.AddMilliseconds(interval);
+                        }
+                    }
+                    window.RefreshQueue(nextCheckAt, tickPending);
                     string status = engine.StatusText;
                     string text = "SPD Scheduler · " + status;
                     tray.Text = text[..Math.Min(63, text.Length)];
@@ -88,10 +100,23 @@ internal sealed class SchedulerContext : ApplicationContext
 
     private async Task TickAsync()
     {
-        if (tickPending || exiting) return;
+        if (tickPending || exiting || !initialized) return;
         tickPending = true;
+        ticker.Stop();
+        nextCheckAt = null;
+        window.RefreshQueue(nextCheckAt, tickPending);
         try { await RunCommandAsync(() => Task.Run(() => engine.TickAsync(stopping.Token), stopping.Token)); }
-        finally { tickPending = false; }
+        finally
+        {
+            tickPending = false;
+            if (!exiting)
+            {
+                ticker.Start();
+                nextCheckAt = DateTimeOffset.Now.AddMilliseconds(ticker.Interval);
+                window.RefreshQueue(nextCheckAt);
+            }
+            System.Diagnostics.Debug.Assert(exiting || (ticker.Enabled && nextCheckAt.HasValue));
+        }
     }
 
     private async Task ExitAsync()

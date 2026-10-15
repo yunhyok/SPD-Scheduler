@@ -27,7 +27,8 @@ public sealed class QueueStore
         try
         {
             using var stream = File.OpenRead(QueuePath);
-            var document = JsonSerializer.Deserialize<QueueDocument>(stream, JsonOptions)
+            using var json = JsonDocument.Parse(stream);
+            var document = json.RootElement.Deserialize<QueueDocument>(JsonOptions)
                 ?? throw new InvalidDataException("목록 파일이 비어 있습니다.");
             if (document.SchemaVersion != 1 || document.Jobs is null || document.Settings is null)
                 throw new InvalidDataException("지원하지 않는 목록 형식입니다.");
@@ -48,7 +49,22 @@ public sealed class QueueStore
                     run.Process is not null && !ValidIdentity(run.Process))
                     throw new InvalidDataException("목록에 유효하지 않은 실행 경로 또는 프로세스 정보가 있습니다.");
             }
+            bool legacyPolicy = !json.RootElement.TryGetProperty("Settings", out var settingsJson) ||
+                !settingsJson.TryGetProperty("ResourcePolicyVersion", out _);
+            if (legacyPolicy)
+            {
+                // Missing legacy fields must retain their old meaning before validation/migration.
+                if (settingsJson.ValueKind == JsonValueKind.Undefined || !settingsJson.TryGetProperty("IdleCpuPercent", out _)) document.Settings.IdleCpuPercent = 1;
+                if (settingsJson.ValueKind == JsonValueKind.Undefined || !settingsJson.TryGetProperty("IdleMemoryMiB", out _)) document.Settings.IdleMemoryMiB = 16;
+                if (settingsJson.ValueKind == JsonValueKind.Undefined || !settingsJson.TryGetProperty("IdleSeconds", out _)) document.Settings.IdleSeconds = 180;
+            }
             SettingsValidator.Validate(document.Settings);
+            if (legacyPolicy && document.Settings.IdleCpuPercent == 1 && document.Settings.IdleMemoryMiB == 16)
+            {
+                document.Settings.IdleCpuPercent = 50;
+                document.Settings.IdleMemoryMiB = 128;
+                if (document.Settings.IdleSeconds == 180) document.Settings.IdleSeconds = 60;
+            }
             return document;
         }
         catch (Exception ex) when (ex is JsonException or ArgumentException or NotSupportedException)

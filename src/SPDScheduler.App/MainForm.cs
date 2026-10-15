@@ -12,10 +12,12 @@ internal sealed class MainForm : Form
     private readonly Label status = new() { AutoSize = true, ForeColor = Color.FromArgb(72, 85, 101), Margin = new Padding(0, 7, 0, 0) };
     private readonly Button start;
     private readonly Button pause;
+    private readonly Button checkNow;
+    private readonly Label checkTiming = new() { AutoSize = true, Anchor = AnchorStyles.Left, ForeColor = Color.DimGray, Margin = Padding.Empty };
     private string queueSignature = "";
     private bool closeForExit;
 
-    public MainForm(SchedulerEngine engine, bool safeMode, Func<Action, Task> command, string dataDirectory)
+    public MainForm(SchedulerEngine engine, bool safeMode, Func<Action, Task> command, Func<Task> checkNow, string dataDirectory)
     {
         this.engine = engine;
         this.safeMode = safeMode;
@@ -23,8 +25,8 @@ internal sealed class MainForm : Form
         this.dataDirectory = dataDirectory;
         Text = "SPD Scheduler " + Application.ProductVersion.Split('+')[0] + (safeMode ? " · 안전 모드" : "");
         Font = new Font("맑은 고딕", 9F);
-        ClientSize = new Size(744, 452);
-        MinimumSize = new Size(720, 440);
+        ClientSize = new Size(744, 490);
+        MinimumSize = new Size(720, 478);
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
         BackColor = Color.FromArgb(246, 248, 251);
@@ -32,11 +34,12 @@ internal sealed class MainForm : Form
         KeyPreview = true;
         AllowDrop = true;
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20, 16, 20, 12), ColumnCount = 1, RowCount = 5 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20, 16, 20, 12), ColumnCount = 1, RowCount = 6 };
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 29));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
         Controls.Add(layout);
         var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
@@ -45,7 +48,7 @@ internal sealed class MainForm : Form
         var title = new Label { Text = "SPD Scheduler", Font = new Font(Font.FontFamily, 17F, FontStyle.Bold), AutoSize = true, ForeColor = Color.FromArgb(28, 45, 66), Margin = Padding.Empty };
         header.Controls.Add(title);
         var execution = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
-        start = MakeButton("시작", async () => await command(engine.Start), true);
+        start = MakeButton("시작", async () => { await command(engine.Start); if (engine.IsArmed) await checkNow(); }, true);
         pause = MakeButton("일시 중지", async () => await command(engine.Pause));
         execution.Controls.AddRange([start, pause]);
         header.Controls.Add(execution);
@@ -74,6 +77,14 @@ internal sealed class MainForm : Form
         layout.Controls.Add(tools, 0, 1);
         layout.Controls.Add(grid, 0, 2);
         layout.Controls.Add(status, 0, 3);
+        var checks = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2, Margin = new Padding(0, 0, 0, 5) };
+        checks.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        checks.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        checks.Controls.Add(checkTiming);
+        this.checkNow = MakeButton("지금 확인", checkNow);
+        this.checkNow.Margin = Padding.Empty;
+        checks.Controls.Add(this.checkNow);
+        layout.Controls.Add(checks, 0, 4);
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -81,7 +92,7 @@ internal sealed class MainForm : Form
         var help = new LinkLabel { Text = "연동 안내", AutoSize = true, Margin = new Padding(4, 4, 0, 0), LinkColor = Color.FromArgb(40, 93, 171) };
         help.LinkClicked += (_, _) => ShowIntegrationHelp();
         footer.Controls.Add(help);
-        layout.Controls.Add(footer, 0, 4);
+        layout.Controls.Add(footer, 0, 5);
 
         var rowMenu = new ContextMenuStrip();
         rowMenu.Items.Add("전체 경로 복사 (Ctrl+C)", null, (_, _) => CopyPaths());
@@ -166,11 +177,16 @@ internal sealed class MainForm : Form
     public void SetExiting() { Enabled = false; status.Text = "진행 중인 확인을 마무리하고 종료합니다…"; }
     public void CloseForExit() { closeForExit = true; Close(); }
 
-    public void RefreshQueue()
+    public void RefreshQueue(DateTimeOffset? nextCheckAt = null, bool checkPending = false)
     {
         if (IsDisposed) return;
         start.Enabled = !engine.IsArmed;
         pause.Enabled = engine.IsArmed;
+        checkNow.Enabled = nextCheckAt.HasValue && !checkPending;
+        checkNow.Text = checkPending ? "확인 중…" : "지금 확인";
+        string lastCheck = engine.LastCheckedAt?.ToLocalTime().ToString("HH:mm:ss") ?? "아직 없음";
+        string nextCheck = checkPending ? "확인 중…" : nextCheckAt?.ToLocalTime().ToString("HH:mm:ss") ?? "준비 중";
+        checkTiming.Text = $"마지막 확인: {lastCheck}  ·  다음 확인: {nextCheck} ({engine.Settings.PollIntervalMinutes}분 간격)";
         status.Text = (safeMode ? "[안전 모드] " : "") + engine.StatusText;
         string signature = string.Join("\n", engine.Jobs.Select(j => $"{j.Id}|{j.FilePath}|{j.Status}|{j.ScheduledAt:O}|{j.LastError}"));
         if (signature == queueSignature) return;

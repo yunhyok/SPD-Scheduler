@@ -17,6 +17,7 @@ public sealed class SchedulerEngine
     public bool IsArmed { get; private set; }
     public string StatusText { get; private set; } = "일시정지 · 목록을 확인한 뒤 시작하세요.";
     public string MonitoringDetails => _gate.Details;
+    public DateTimeOffset? LastCheckedAt { get; private set; }
     public event EventHandler? Changed;
 
     public SchedulerEngine(QueueStore store, IPowerSiRunner runner, IProcessProbe probe, TimeProvider? clock = null)
@@ -164,6 +165,7 @@ public sealed class SchedulerEngine
             if (!_initialized) await InitializeAsync(cancellationToken);
             if (_persistenceFailed) return;
             var snapshot = await _probe.CaptureAsync(cancellationToken);
+            LastCheckedAt = _clock.GetUtcNow();
             RefreshResolved(snapshot);
             var active = Jobs.Where(IsActive).ToArray();
             if (active.Length > 1)
@@ -199,12 +201,14 @@ public sealed class SchedulerEngine
             }
             // Repeat the process snapshot immediately before crossing the launch boundary.
             var finalSnapshot = await _probe.CaptureAsync(cancellationToken);
+            LastCheckedAt = _clock.GetUtcNow();
             if (!IsArmed || !Document.Jobs.Contains(next) || next.Status != JobStatus.Queued ||
                 (next.ScheduledAt.HasValue && next.ScheduledAt > _clock.GetUtcNow())) return;
-            if (!_gate.Evaluate(finalSnapshot, Settings).CanStart)
+            var finalDecision = _gate.Confirm(finalSnapshot, Settings);
+            if (!finalDecision.CanStart)
             {
                 _gate.Reset();
-                StatusText = "실행 직전 PowerSI 상태가 변경되어 다시 확인합니다.";
+                StatusText = finalDecision.Reason;
                 return;
             }
             next.Run = new RunRecord { CreatedAt = now };

@@ -7,6 +7,7 @@ public static class SettingsValidator
     public static void Validate(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        if (settings.ResourcePolicyVersion != 1) throw new ArgumentException("지원하지 않는 리소스 판정 설정 버전입니다.");
         if (settings.PollIntervalMinutes is < 1 or > 60 || settings.IdleSeconds is < 10 or > 86400 || !double.IsFinite(settings.IdleCpuPercent) ||
             settings.IdleCpuPercent is <= 0 or > 100 || settings.IdleMemoryMiB is < 0 or > 1048576 ||
             settings.IdleIoKiBPerSecond is < 0 or > 1048576 || settings.StartTimeoutMinutes is < 1 or > 1440)
