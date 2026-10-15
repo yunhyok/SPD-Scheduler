@@ -72,7 +72,7 @@ internal sealed class SettingsForm : Form
         thresholds.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 31));
         thresholds.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 19));
         idleSeconds = AddNumber(thresholds, "유휴 유지 시간 (초)", current.IdleSeconds, 10, 86400, 0, 0);
-        cpu = AddNumber(thresholds, "CPU 한도 (%)", (decimal)current.IdleCpuPercent, 0.01M, 100, 2, 0, 2);
+        cpu = AddNumber(thresholds, "CPU 한도 (1코어 %)", (decimal)current.IdleCpuPercent, 0.01M, 100, 2, 0, 2);
         memory = AddNumber(thresholds, "메모리 변화 한도 (MiB)", current.IdleMemoryMiB, 0, 1048576, 0, 1);
         io = AddNumber(thresholds, "I/O 한도 (KiB/s)", current.IdleIoKiBPerSecond, 0, 1048576, 2, 1);
         timeout = AddNumber(thresholds, "시작 제한 시간 (분)", current.StartTimeoutMinutes, 1, 1440, 0, 2);

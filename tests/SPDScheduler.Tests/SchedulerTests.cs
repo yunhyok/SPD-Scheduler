@@ -487,7 +487,7 @@ internal static class SchedulerTests
         var at = new DateTimeOffset(2026, 10, 14, 14, 30, 0, TimeSpan.FromHours(9));
         var job = new JobItem { FilePath = rig.CreateFile("문자 } [한글] $ fixture.spd"), ScheduledAt = at,
             ScheduleTimeZone = "Korea Standard Time", Order = 4 };
-        var document = new QueueDocument { Jobs = [job], Settings = new AppSettings { PollIntervalMinutes = 5, CompletionRules =
+        var document = new QueueDocument { Jobs = [job], Settings = new AppSettings { PollIntervalMinutes = 5, IdleCpuPercent = 2.5, CompletionRules =
             [new() { Workflow = "extraction", SpdPattern = "extraction", StartedPattern = "start-a", CompletedPattern = "done-a" },
              new() { Workflow = "another-mode", SpdPattern = "another", StartedPattern = "start-b", CompletedPattern = "done-b" }] } };
         rig.Store.Save(document);
@@ -499,6 +499,7 @@ internal static class SchedulerTests
         Check.Equal(5L, loaded.Jobs.Single().Order, "Second atomic save must replace the first document");
         Check.Equal(2, loaded.Settings.CompletionRules.Count, "All workflow modes must survive storage");
         Check.Equal(5, loaded.Settings.PollIntervalMinutes, "Polling interval must survive storage");
+        Check.Equal(2.5, loaded.Settings.IdleCpuPercent, "A custom one-core CPU limit must retain its original meaning");
         return Task.CompletedTask;
     }
 

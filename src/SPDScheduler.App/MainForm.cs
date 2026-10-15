@@ -21,7 +21,7 @@ internal sealed class MainForm : Form
         this.safeMode = safeMode;
         this.command = command;
         this.dataDirectory = dataDirectory;
-        Text = "SPD Scheduler" + (safeMode ? " · 안전 모드" : "");
+        Text = "SPD Scheduler " + Application.ProductVersion.Split('+')[0] + (safeMode ? " · 안전 모드" : "");
         Font = new Font("맑은 고딕", 9F);
         ClientSize = new Size(744, 452);
         MinimumSize = new Size(720, 440);
@@ -61,6 +61,16 @@ internal sealed class MainForm : Form
             foreach (Guid id in engine.Jobs.Where(j => j.Status == JobStatus.Completed).Select(j => j.Id).ToArray()) engine.Remove(id);
         })));
         tools.Controls.Add(MakeButton("설정", SettingsAsync));
+        tools.Controls.Add(MakeButton("감시 상세", () =>
+        {
+            using var detail = new Form { Text = "PowerSI 감시 상세 · 마지막 외부 유휴 관측", ClientSize = new Size(760, 440),
+                StartPosition = FormStartPosition.CenterParent, Font = Font, MinimizeBox = false, ShowInTaskbar = false };
+            detail.Controls.Add(new TextBox { Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
+                ScrollBars = ScrollBars.Both, WordWrap = false, Text = engine.MonitoringDetails,
+                AccessibleName = "PowerSI 감시 상세 (Ctrl+A, Ctrl+C로 복사)", BackColor = Color.White });
+            detail.ShowDialog(this);
+            return Task.CompletedTask;
+        }));
         layout.Controls.Add(tools, 0, 1);
         layout.Controls.Add(grid, 0, 2);
         layout.Controls.Add(status, 0, 3);

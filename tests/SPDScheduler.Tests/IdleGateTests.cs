@@ -13,6 +13,9 @@ internal static class IdleGateTests
         yield return Test("Idle inference requires the full continuous interval", FullInterval);
         yield return Test("CPU uses one-core percentage rather than machine percentage", OneCoreCpu);
         yield return Test("CPU load is accumulated across the process tree", AggregateCpu);
+        yield return Test("64 logical CPU display identifies the busy PID without relaxing the gate", MachineCpuDisplay);
+        yield return Test("Multiple quiet PowerSI windows allow the queue after sustained idle", MultipleIdleWindows);
+        yield return Test("A completed GUI with a busy solver still blocks on a many-core PC", CompletedWithBusySolver);
         yield return Test("A large stable memory allocation may be inferred idle", StableLargeMemory);
         yield return Test("Memory variation resets the continuous idle window", MemoryVariation);
         yield return Test("Memory variation may equal the configured limit", ExactMemoryThreshold);
@@ -83,6 +86,45 @@ internal static class IdleGateTests
     {
         var decision = QuietUntil(new IdleGate(), 180, sample: Sample(memory: 1L << 40));
         Check.That(decision.CanStart && decision.InferredIdle, "Absolute memory size is not a busy signal");
+    }
+
+    private static void MachineCpuDisplay()
+    {
+        var gate = new IdleGate();
+        var child = new ProcessIdentity(401, Epoch, "synthetic-solver.exe");
+        gate.Evaluate(new ProcessSnapshot(Epoch, [Sample(), Sample(child)], LogicalProcessorCount: 64), new AppSettings());
+        var decision = gate.Evaluate(new ProcessSnapshot(Epoch.AddSeconds(60),
+            [Sample(cpu: 0.12), Sample(child, cpu: 68.736)], LogicalProcessorCount: 64), new AppSettings());
+        Check.That(!decision.CanStart, "Display normalization must not relax the one-core threshold");
+        Check.That(decision.Reason.Contains($"{1.1476 * 100 / 64:F2}% (전체)"), "114.76% one-core must display as 1.79% whole-machine");
+        Check.That(gate.Details.Contains("PID 401 · synthetic-solver.exe") && gate.Details.Contains($"{114.56:F2}% (1코어)"),
+            "Per-process details must identify the source of CPU load");
+        Check.That(gate.Details.Contains($"{1d / 64:F4}% (전체 PC)") && gate.Details.Contains("기준 초과: CPU"),
+            "Details must show the equivalent whole-PC limit and actual blocker");
+    }
+
+    private static void MultipleIdleWindows()
+    {
+        var gate = new IdleGate();
+        for (int seconds = 0; seconds <= 180; seconds += 60)
+        {
+            var samples = Enumerable.Range(0, 3).Select(i => Sample(External with { Pid = 400 + i },
+                cpu: seconds * 0.002, memory: 20L << 30)).ToArray();
+            var decision = gate.Evaluate(new ProcessSnapshot(Epoch.AddSeconds(seconds), samples, LogicalProcessorCount: 64), new AppSettings());
+            Check.Equal(seconds == 180, decision.CanStart, "Multiple open idle windows with stable large memory may qualify");
+        }
+    }
+
+    private static void CompletedWithBusySolver()
+    {
+        var gate = new IdleGate();
+        for (int seconds = 0; seconds <= 240; seconds += 60)
+        {
+            var samples = new[] { Sample(signal: ProcessSignal.Completed),
+                Sample(new ProcessIdentity(401, Epoch, "synthetic-solver.exe"), cpu: seconds) };
+            Check.That(!gate.Evaluate(new ProcessSnapshot(Epoch.AddSeconds(seconds), samples, LogicalProcessorCount: 64), new AppSettings()).CanStart,
+                "One busy solver is only 1.56% machine CPU but must still block, even after a GUI completion label");
+        }
     }
 
     private static void MemoryVariation()

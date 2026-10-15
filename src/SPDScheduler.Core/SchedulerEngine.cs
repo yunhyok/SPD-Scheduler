@@ -16,6 +16,7 @@ public sealed class SchedulerEngine
     public AppSettings Settings => Document.Settings;
     public bool IsArmed { get; private set; }
     public string StatusText { get; private set; } = "일시정지 · 목록을 확인한 뒤 시작하세요.";
+    public string MonitoringDetails => _gate.Details;
     public event EventHandler? Changed;
 
     public SchedulerEngine(QueueStore store, IPowerSiRunner runner, IProcessProbe probe, TimeProvider? clock = null)

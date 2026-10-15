@@ -8,6 +8,7 @@ namespace SPDScheduler.Windows;
 public sealed class WindowsProcessProbe : IProcessProbe
 {
     private readonly Dictionary<int, ProcessIdentity> tracked = [];
+    public static int LogicalProcessorCount => Math.Max(1, (int)GetActiveProcessorCount(ushort.MaxValue));
 
     public async Task<ProcessSnapshot> CaptureAsync(CancellationToken cancellationToken)
     {
@@ -28,8 +29,10 @@ public sealed class WindowsProcessProbe : IProcessProbe
         if (string.IsNullOrWhiteSpace(status)) return ProcessSignal.None;
         if (status.Contains("suspended", StringComparison.OrdinalIgnoreCase)) return ProcessSignal.Suspended;
         if (status.Contains("license", StringComparison.OrdinalIgnoreCase)) return ProcessSignal.LicenseWaiting;
-        if (status.Split('\n').Any(line => line.Trim().Equals("Simulation Done.", StringComparison.Ordinal))) return ProcessSignal.Completed;
-        if (status.Contains("Simulation", StringComparison.OrdinalIgnoreCase)) return ProcessSignal.Running;
+        var lines = status.Split('\n');
+        if (lines.Any(line => line.Contains("Simulation", StringComparison.OrdinalIgnoreCase) &&
+            !line.Trim().Equals("Simulation Done.", StringComparison.Ordinal))) return ProcessSignal.Running;
+        if (lines.Any(line => line.Trim().Equals("Simulation Done.", StringComparison.Ordinal))) return ProcessSignal.Completed;
         return ProcessSignal.None;
     }
 
@@ -39,11 +42,11 @@ public sealed class WindowsProcessProbe : IProcessProbe
         {
             var rows = new Dictionary<int, (int Parent, string Name)>();
             var handle = CreateToolhelp32Snapshot(2, 0);
-            if (handle == new IntPtr(-1)) return new(DateTimeOffset.UtcNow, [], false, "Process enumeration failed.");
+            if (handle == new IntPtr(-1)) return new(DateTimeOffset.UtcNow, [], false, "Process enumeration failed.", LogicalProcessorCount: LogicalProcessorCount);
             try
             {
                 var entry = new ProcessEntry { Size = (uint)Marshal.SizeOf<ProcessEntry>() };
-                if (!Process32First(handle, ref entry)) return new(DateTimeOffset.UtcNow, [], false, "Process enumeration failed.");
+                if (!Process32First(handle, ref entry)) return new(DateTimeOffset.UtcNow, [], false, "Process enumeration failed.", LogicalProcessorCount: LogicalProcessorCount);
                 do
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -51,57 +54,71 @@ public sealed class WindowsProcessProbe : IProcessProbe
                         rows[(int)entry.Pid] = ((int)entry.ParentPid, entry.Name);
                     entry.Size = (uint)Marshal.SizeOf<ProcessEntry>();
                 } while (Process32Next(handle, ref entry));
-                if (Marshal.GetLastWin32Error() != 18) return new(DateTimeOffset.UtcNow, [], false, "Process enumeration incomplete.");
+                if (Marshal.GetLastWin32Error() != 18) return new(DateTimeOffset.UtcNow, [], false, "Process enumeration incomplete.", LogicalProcessorCount: LogicalProcessorCount);
             }
             finally { CloseHandle(handle); }
 
-            var relevant = rows.Where(pair => IsPowerSi(pair.Value.Name)).Select(pair => pair.Key).ToHashSet();
-            foreach (var old in tracked.Values.ToArray())
+            return SelectProcesses(rows, pid =>
             {
-                if (!rows.ContainsKey(old.Pid)) { tracked.Remove(old.Pid); continue; }
-                try
-                {
-                    using var process = Process.GetProcessById(old.Pid);
-                    if (SameIdentity(old, ReadIdentity(process))) relevant.Add(old.Pid);
-                    else tracked.Remove(old.Pid);
-                }
-                catch (ArgumentException) { tracked.Remove(old.Pid); }
-                catch (InvalidOperationException) { relevant.Add(old.Pid); }
-                catch (System.ComponentModel.Win32Exception) { relevant.Add(old.Pid); }
-                catch (IOException) { relevant.Add(old.Pid); }
-            }
-            bool added;
-            do
-            {
-                added = false;
-                foreach (var row in rows)
-                    if (relevant.Contains(row.Value.Parent) && relevant.Add(row.Key)) added = true;
-            } while (added);
+                using var process = Process.GetProcessById(pid);
+                var identity = ReadIdentity(process);
+                if (process.HasExited) return null;
+                if (!GetProcessIoCounters(process.Handle, out var io)) throw new IOException("Process I/O is unavailable.");
+                return new ProcessSample(identity, rows[pid].Parent,
+                    process.TotalProcessorTime.TotalSeconds, process.PrivateMemorySize64,
+                    checked(io.ReadBytes + io.WriteBytes + io.OtherBytes));
+            }, cancellationToken);
+        }
+    }
 
-            var samples = new List<ProcessSample>();
-            var complete = true;
-            foreach (int pid in relevant.Order())
+    internal ProcessSnapshot SelectProcesses(IReadOnlyDictionary<int, (int Parent, string Name)> rows,
+        Func<int, ProcessSample?> readSample, CancellationToken cancellationToken)
+    {
+        var read = new Dictionary<int, ProcessSample?>();
+        var selected = new Dictionary<int, ProcessSample>();
+        bool complete = true;
+        foreach (var old in tracked.Values.ToArray())
+        {
+            if (!rows.ContainsKey(old.Pid)) { tracked.Remove(old.Pid); continue; }
+            var sample = Read(old.Pid);
+            if (sample != null && SameIdentity(old, sample.Identity)) selected[old.Pid] = sample;
+            else if (sample != null) tracked.Remove(old.Pid);
+        }
+        foreach (var row in rows.Where(pair => IsPowerSi(pair.Value.Name)))
+        {
+            var sample = Read(row.Key);
+            if (sample != null && IsPowerSi(sample.Identity.ImagePath)) selected[row.Key] = sample;
+        }
+        bool added;
+        do
+        {
+            added = false;
+            foreach (var row in rows)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                try
-                {
-                    using var process = Process.GetProcessById(pid);
-                    var identity = ReadIdentity(process);
-                    if (process.HasExited) continue;
-                    if (!GetProcessIoCounters(process.Handle, out var io)) throw new IOException("Process I/O is unavailable.");
-                    samples.Add(new(identity, rows.GetValueOrDefault(pid).Parent,
-                        process.TotalProcessorTime.TotalSeconds, process.PrivateMemorySize64,
-                        checked(io.ReadBytes + io.WriteBytes + io.OtherBytes)));
-                    tracked[pid] = identity;
-                }
-                catch (ArgumentException) { tracked.Remove(pid); }
-                catch (InvalidOperationException) { complete = false; }
-                catch (System.ComponentModel.Win32Exception) { complete = false; }
-                catch (IOException) { complete = false; }
-                catch (OverflowException) { complete = false; }
+                if (selected.ContainsKey(row.Key) || !selected.TryGetValue(row.Value.Parent, out var parent)) continue;
+                var sample = Read(row.Key);
+                // A surviving process can retain the PID of an exited parent that Windows has since reused.
+                if (sample != null && sample.Identity.StartedAt >= parent.Identity.StartedAt)
+                { selected[row.Key] = sample; added = true; }
             }
-            return new(DateTimeOffset.UtcNow, samples, complete,
-                complete ? null : "A PowerSI process identity or resource counter could not be read.");
+        } while (added);
+        foreach (var sample in selected.Values) tracked[sample.Identity.Pid] = sample.Identity;
+        return new(DateTimeOffset.UtcNow, selected.Values.OrderBy(sample => sample.Identity.Pid).ToArray(), complete,
+            complete ? null : "A PowerSI process identity or resource counter could not be read.", LogicalProcessorCount: LogicalProcessorCount);
+
+        ProcessSample? Read(int pid)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (read.TryGetValue(pid, out var cached)) return cached;
+            ProcessSample? sample = null;
+            try { sample = readSample(pid); if (sample == null) tracked.Remove(pid); }
+            catch (ArgumentException) { tracked.Remove(pid); }
+            catch (InvalidOperationException) { complete = false; }
+            catch (System.ComponentModel.Win32Exception) { complete = false; }
+            catch (IOException) { complete = false; }
+            catch (OverflowException) { complete = false; }
+            read[pid] = sample;
+            return sample;
         }
     }
 
@@ -151,6 +168,7 @@ public sealed class WindowsProcessProbe : IProcessProbe
     }
 
     [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
+    [DllImport("kernel32.dll")] private static extern uint GetActiveProcessorCount(ushort groupNumber);
     [DllImport("kernel32.dll", EntryPoint = "Process32FirstW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)] private static extern bool Process32First(IntPtr snapshot, ref ProcessEntry entry);
     [DllImport("kernel32.dll", EntryPoint = "Process32NextW", CharSet = CharSet.Unicode, SetLastError = true)]

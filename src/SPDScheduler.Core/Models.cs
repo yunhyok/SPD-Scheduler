@@ -73,7 +73,8 @@ public sealed record ProcessSample(
     string? Evidence = null);
 
 public sealed record ProcessSnapshot(DateTimeOffset CapturedAt,
-    IReadOnlyList<ProcessSample> Processes, bool Complete = true, string? Error = null);
+    IReadOnlyList<ProcessSample> Processes, bool Complete = true, string? Error = null,
+    int LogicalProcessorCount = 1);
 
 public sealed record GateDecision(bool CanStart, bool InferredIdle, string Reason);
 

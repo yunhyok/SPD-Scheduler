@@ -35,14 +35,14 @@
 
 ```powershell
 ./tools/Publish-Release.ps1 `
-  -InstallerPath ./artifacts/installer/SPD-Scheduler-Setup-0.1.1.exe `
+  -InstallerPath ./artifacts/installer/SPD-Scheduler-Setup-0.1.2.exe `
   -EvidencePath C:/Validation/SPD-Scheduler-evidence.json `
   -ValidateOnly
 ```
 
-같은 명령에서 `-ValidateOnly`를 제외하면 `v0.1.1` 정식 Release에 설치파일과 SHA-256을 게시합니다. 스크립트는 깨끗한 현재 HEAD, 빌드 manifest, 커밋·해시 일치를 검사합니다. `-EvidencePath`를 제공하면 증거와 설치파일의 일치 및 필수 통과 결과도 검사합니다. 실제 검증 후 소스나 설치파일을 바꾸면 다시 빌드·검증해야 합니다. 이 검사는 사람의 실측을 대체하지 않습니다.
+같은 명령에서 `-ValidateOnly`를 제외하면 `v0.1.2` 정식 Release에 설치파일과 SHA-256을 게시합니다. 스크립트는 깨끗한 현재 HEAD, 빌드 manifest, 커밋·해시 일치를 검사합니다. `-EvidencePath`를 제공하면 증거와 설치파일의 일치 및 필수 통과 결과도 검사합니다. 실제 검증 후 소스나 설치파일을 바꾸면 다시 빌드·검증해야 합니다. 이 검사는 사람의 실측을 대체하지 않습니다.
 
-사용자 요청에 따라 실측 전에도 설치·업데이트용 정식 Release를 게시할 수 있습니다. 이 경우 `-EvidencePath`를 생략하며, 릴리스 설명에 PowerSI 연동 검증이 아직 남아 있다고 자동 표시합니다. 미검증 증거를 통과로 변경하지 않습니다. 변경 설명은 `-NotesPath docs/releases/v0.1.1.md`로 지정할 수 있습니다.
+사용자 요청에 따라 실측 전에도 설치·업데이트용 정식 Release를 게시할 수 있습니다. 이 경우 `-EvidencePath`를 생략하며, 릴리스 설명에 PowerSI 연동 검증이 아직 남아 있다고 자동 표시합니다. 미검증 증거를 통과로 변경하지 않습니다. 변경 설명은 `-NotesPath docs/releases/v0.1.2.md`로 지정할 수 있습니다.
 
 ## 현 개발 환경에서의 검증 범위
 
