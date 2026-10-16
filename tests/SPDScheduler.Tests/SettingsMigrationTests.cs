@@ -10,6 +10,7 @@ internal static class SettingsMigrationTests
         yield return ("Missing legacy thresholds use legacy defaults before migration", MissingFields);
         yield return ("Custom resource limits and durations survive migration", CustomSettings);
         yield return ("Invalid legacy thresholds are rejected before migration", InvalidSettings);
+        yield return ("External BBS overlap defaults on and an explicit opt-out persists", BbsPolicy);
     }
 
     private static async Task LegacyDefaults()
@@ -85,6 +86,20 @@ internal static class SettingsMigrationTests
             Check.Throws<InvalidDataException>(() => rig.Store.Load(), "Invalid state must not be repaired through migration");
             Check.Equal(json, File.ReadAllText(rig.Store.QueuePath), "Invalid original must be preserved");
         }
+        return Task.CompletedTask;
+    }
+
+    private static Task BbsPolicy()
+    {
+        using var rig = new TestRig();
+        File.WriteAllText(rig.Store.QueuePath, "{\"SchemaVersion\":1,\"Jobs\":[],\"Settings\":{\"ResourcePolicyVersion\":1,\"IdleCpuPercent\":12,\"IdleMemoryMiB\":48}}");
+        var loaded = rig.Store.Load();
+        Check.That(loaded.Settings.AllowBbsPostProcessing, "Existing queues enable the requested external BBS overlap policy");
+        Check.Equal(12d, loaded.Settings.IdleCpuPercent, "Enabling BBS overlap must not raise custom CPU limits");
+        Check.Equal(48, loaded.Settings.IdleMemoryMiB, "Enabling BBS overlap must not change custom memory limits");
+        loaded.Settings.AllowBbsPostProcessing = false;
+        rig.Store.Save(loaded);
+        Check.That(!rig.Store.Load().Settings.AllowBbsPostProcessing, "A saved opt-out must survive reload");
         return Task.CompletedTask;
     }
 }

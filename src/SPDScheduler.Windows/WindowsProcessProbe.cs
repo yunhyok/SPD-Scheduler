@@ -80,7 +80,7 @@ public sealed class WindowsProcessProbe : IProcessProbe
                 if (!GetProcessIoCounters(process.Handle, out var io)) throw new IOException("Process I/O is unavailable.");
                 return new ProcessSample(identity, rows[pid].Parent,
                     process.TotalProcessorTime.TotalSeconds, process.PrivateMemorySize64,
-                    checked(io.ReadBytes + io.WriteBytes + io.OtherBytes));
+                    checked(io.ReadBytes + io.WriteBytes + io.OtherBytes), OtherIoBytes: io.OtherBytes);
             }, cancellationToken);
         }
     }

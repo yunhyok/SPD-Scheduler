@@ -41,7 +41,7 @@ internal static class IdleGateTests
     private static (string, Func<Task>) Test(string name, Action test) =>
         (name, () => { test(); return Task.CompletedTask; });
 
-    private static AppSettings StrictSettings() => new() { IdleSeconds = 180, IdleCpuPercent = 1, IdleMemoryMiB = 16 };
+    private static AppSettings StrictSettings() => new() { IdleSeconds = 180, IdleCpuPercent = 1, IdleMemoryMiB = 16, AllowBbsPostProcessing = false };
 
     private static ProcessSample Sample(ProcessIdentity? identity = null, double cpu = 0,
         long memory = 100 * 1024 * 1024, ulong io = 0, bool accessible = true,
@@ -78,7 +78,7 @@ internal static class IdleGateTests
         foreach (int childActivity in new[] { 0, 1, 2 })
         {
             var gate = new IdleGate();
-            var settings = new AppSettings { IdleSeconds = 60, IdleCpuPercent = 50, IdleMemoryMiB = 128 };
+            var settings = new AppSettings { IdleSeconds = 60, IdleCpuPercent = 50, IdleMemoryMiB = 128, AllowBbsPostProcessing = false };
             var root = External with { ImagePath = "PowerSI.exe" };
             var child = External with { Pid = 401, ImagePath = "BbsCon.exe" };
             foreach (int seconds in new[] { 0, 60 })
@@ -147,7 +147,7 @@ internal static class IdleGateTests
         var gate = new IdleGate();
         var root = External with { ImagePath = "PowerSI.exe" };
         var child = External with { Pid = 401, ImagePath = "BbsCon.exe" };
-        var settings = new AppSettings { IdleSeconds = 180, IdleCpuPercent = 50, IdleMemoryMiB = 128 };
+        var settings = new AppSettings { IdleSeconds = 180, IdleCpuPercent = 50, IdleMemoryMiB = 128, AllowBbsPostProcessing = false };
         for (int seconds = 0; seconds <= 240; seconds += 60)
         {
             var signal = seconds == 0 ? ProcessSignal.Running : ProcessSignal.Completed;
@@ -162,7 +162,7 @@ internal static class IdleGateTests
         var gate = new IdleGate();
         var root = External with { ImagePath = "PowerSI.exe" };
         var child = External with { Pid = 401, ImagePath = "BbsCon.exe" };
-        var settings = new AppSettings();
+        var settings = new AppSettings { AllowBbsPostProcessing = false };
         ProcessSample Gui(int seconds) => Sample(root, cpu: seconds * 0.2247,
             memory: (long)((100 + seconds / 60d * 9.4) * 1048576), io: (ulong)(seconds * 46.5 * 1024));
         for (int seconds = 0; seconds <= 120; seconds += 60)
@@ -324,7 +324,7 @@ internal static class IdleGateTests
     private static void StatusObservationDelay()
     {
         var gate = new IdleGate();
-        var settings = new AppSettings { IdleSeconds = 60, IdleCpuPercent = 1, IdleMemoryMiB = 16 };
+        var settings = new AppSettings { IdleSeconds = 60, IdleCpuPercent = 1, IdleMemoryMiB = 16, AllowBbsPostProcessing = false };
         ProcessSnapshot Snapshot(int seconds) => new(Epoch.AddSeconds(seconds),
             Enumerable.Range(0, 4).Select(i => Sample(External with { Pid = 400 + i })).ToArray(),
             ObservationDuration: TimeSpan.FromSeconds(12));
@@ -338,7 +338,7 @@ internal static class IdleGateTests
     {
         foreach (int minutes in new[] { 1, 5 })
         {
-            var settings = new AppSettings { PollIntervalMinutes = minutes, IdleSeconds = minutes * 180, IdleCpuPercent = 1, IdleMemoryMiB = 16 };
+            var settings = new AppSettings { PollIntervalMinutes = minutes, IdleSeconds = minutes * 180, IdleCpuPercent = 1, IdleMemoryMiB = 16, AllowBbsPostProcessing = false };
             var gate = new IdleGate();
             for (int sample = 0; sample <= 3; sample++)
             {
@@ -353,7 +353,7 @@ internal static class IdleGateTests
 
     private static void MissedMinutePolling()
     {
-        var settings = new AppSettings { PollIntervalMinutes = 5, IdleSeconds = 900, IdleCpuPercent = 1, IdleMemoryMiB = 16 };
+        var settings = new AppSettings { PollIntervalMinutes = 5, IdleSeconds = 900, IdleCpuPercent = 1, IdleMemoryMiB = 16, AllowBbsPostProcessing = false };
         var gate = new IdleGate();
         foreach (int seconds in new[] { 0, 300, 600, 1200 })
             Check.That(!gate.Evaluate(new ProcessSnapshot(Epoch.AddSeconds(seconds), [Sample()]), settings).CanStart,

@@ -13,6 +13,7 @@ internal sealed class SettingsForm : Form
     private readonly NumericUpDown io;
     private readonly NumericUpDown timeout;
     private readonly NumericUpDown polling;
+    private readonly CheckBox allowBbs;
     private readonly DataGridView rules;
     public AppSettings? Result { get; private set; }
 
@@ -20,17 +21,18 @@ internal sealed class SettingsForm : Form
     {
         Text = "SPD Scheduler 설정";
         Font = new Font("맑은 고딕", 9F);
-        ClientSize = new Size(716, 550);
-        MinimumSize = new Size(690, 550);
+        ClientSize = new Size(716, 602);
+        MinimumSize = new Size(690, 602);
         StartPosition = FormStartPosition.CenterParent;
         AutoScaleMode = AutoScaleMode.Dpi;
         MinimizeBox = false;
         MaximizeBox = false;
         BackColor = Color.FromArgb(246, 248, 251);
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), ColumnCount = 1, RowCount = 7 };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), ColumnCount = 1, RowCount = 8 };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 37));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 123));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
@@ -74,15 +76,21 @@ internal sealed class SettingsForm : Form
         idleSeconds = AddNumber(thresholds, "유휴 유지 시간 (초)", current.IdleSeconds, 10, 86400, 0, 0);
         cpu = AddNumber(thresholds, "CPU 한도 (1코어 %)", (decimal)current.IdleCpuPercent, 0.01M, 100, 2, 0, 2);
         memory = AddNumber(thresholds, "메모리 변화 한도 (MiB)", current.IdleMemoryMiB, 0, 1048576, 0, 1);
-        io = AddNumber(thresholds, "I/O 한도 (KiB/s)", current.IdleIoKiBPerSecond, 0, 1048576, 2, 1);
+        io = AddNumber(thresholds, "읽기/쓰기 한도 (KiB/s)", current.IdleIoKiBPerSecond, 0, 1048576, 2, 1);
         timeout = AddNumber(thresholds, "시작 제한 시간 (분)", current.StartTimeoutMinutes, 1, 1440, 0, 2);
         polling = AddNumber(thresholds, "확인 간격 (분)", current.PollIntervalMinutes, 1, 60, 2, 2);
         root.Controls.Add(thresholds, 0, 2);
+        var bbsOptions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = Padding.Empty };
+        allowBbs = new CheckBox { Text = "외부 BbsCon 후처리 중 다음 시뮬레이션 허용", Checked = current.AllowBbsPostProcessing,
+            AutoSize = true, AccessibleName = "외부 BbsCon 후처리 동시 진행 허용" };
+        bbsOptions.Controls.Add(allowBbs);
+        bbsOptions.Controls.Add(new Label { Text = "BbsCon은 그대로 유지합니다. 자체 실행 작업은 저장·정리가 끝나야 다음 작업을 시작합니다.", AutoSize = true, ForeColor = Color.DimGray });
+        root.Controls.Add(bbsOptions, 0, 3);
         root.Controls.Add(new Label
         {
             Text = "고급 · 작업별 판정 규칙 (정규식)\nSPD 패턴은 파일의 각 줄에서 평가합니다. 모든 패턴은 기본적으로 대소문자를 구분합니다.\n시작·완료 패턴을 실제 로그에 맞추세요. 대소문자를 무시하려면 (?i)를 붙이세요.",
             Dock = DockStyle.Fill, ForeColor = Color.FromArgb(65, 79, 98), Margin = new Padding(0, 5, 0, 0)
-        }, 0, 3);
+        }, 0, 4);
         rules = new DataGridView
         {
             Dock = DockStyle.Fill, BackgroundColor = Color.White, BorderStyle = BorderStyle.FixedSingle,
@@ -95,9 +103,9 @@ internal sealed class SettingsForm : Form
         rules.Columns.Add(new DataGridViewTextBoxColumn { Name = "Started", HeaderText = "시작 패턴 (필수)", FillWeight = 26 });
         rules.Columns.Add(new DataGridViewTextBoxColumn { Name = "Completed", HeaderText = "완료 표시 패턴", FillWeight = 26 });
         foreach (CompletionRule rule in current.CompletionRules) rules.Rows.Add(rule.Workflow, rule.SpdPattern, rule.StartedPattern, rule.CompletedPattern);
-        root.Controls.Add(rules, 0, 4);
+        root.Controls.Add(rules, 0, 5);
         var location = new TextBox { Text = "저장 폴더: " + dataDirectory, ReadOnly = true, BorderStyle = BorderStyle.None, BackColor = BackColor, Dock = DockStyle.Fill, Margin = new Padding(0, 10, 0, 0), AccessibleName = "설정 및 대기열 저장 폴더" };
-        root.Controls.Add(location, 0, 5);
+        root.Controls.Add(location, 0, 6);
         var actions = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty };
         var cancel = new Button { Text = "취소", DialogResult = DialogResult.Cancel, Size = new Size(80, 30) };
         var save = new Button { Text = "저장", Size = new Size(80, 30) };
@@ -108,7 +116,7 @@ internal sealed class SettingsForm : Form
         };
         save.Click += (_, _) => SaveSettings();
         actions.Controls.AddRange([cancel, save, deleteRule]);
-        root.Controls.Add(actions, 0, 6);
+        root.Controls.Add(actions, 0, 7);
         AcceptButton = save;
         CancelButton = cancel;
     }
@@ -141,6 +149,7 @@ internal sealed class SettingsForm : Form
             }
             Result = new AppSettings
             {
+                AllowBbsPostProcessing = allowBbs.Checked,
                 PowerSiPath = path, PollIntervalMinutes = (int)polling.Value,
                 IdleSeconds = (int)idleSeconds.Value, IdleCpuPercent = (double)cpu.Value,
                 IdleMemoryMiB = (int)memory.Value, IdleIoKiBPerSecond = (int)io.Value,

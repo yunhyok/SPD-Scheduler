@@ -49,6 +49,7 @@ public sealed class CompletionRule
 public sealed class AppSettings
 {
     public int ResourcePolicyVersion { get; set; } = 1;
+    public bool AllowBbsPostProcessing { get; set; } = true;
     public string PowerSiPath { get; set; } = "";
     public int PollIntervalMinutes { get; set; } = 1;
     public int IdleSeconds { get; set; } = 60;
@@ -71,7 +72,7 @@ public enum ProcessSignal { None, Running, Suspended, LicenseWaiting, Completed,
 public sealed record ProcessSample(
     ProcessIdentity Identity, int ParentPid, double CpuSeconds, long PrivateBytes,
     ulong IoBytes, bool Accessible = true, ProcessSignal Signal = ProcessSignal.None,
-    string? Evidence = null);
+    string? Evidence = null, ulong OtherIoBytes = 0);
 
 public sealed record ProcessSnapshot(DateTimeOffset CapturedAt,
     IReadOnlyList<ProcessSample> Processes, bool Complete = true, string? Error = null,

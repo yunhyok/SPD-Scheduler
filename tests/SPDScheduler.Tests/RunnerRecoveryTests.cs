@@ -63,14 +63,17 @@ internal static class RunnerRecoveryTests
 
     private static async Task SavedWithDescendant()
     {
-        using var rig = new TestRig();
-        var job = Job(rig);
-        var child = new ProcessIdentity(int.MaxValue - 1, rig.Clock.Now, @"C:\SyntheticOnly\solver.exe");
-        job.Run!.Children.Add(child);
-        Marker(job, "SAVED");
-        var result = await Inspect(job, samples: [new ProcessSample(child, int.MaxValue, 0, 1024, 0)]);
-        Check.Equal(RunStage.Saving, result.Stage, "A still-observed solver descendant must block next-job completion");
-        Check.That(result.ProcessAlive, "Known descendant must count as alive");
+        foreach (string image in new[] { "solver.exe", "BbsCon.exe" })
+        {
+            using var rig = new TestRig();
+            var job = Job(rig);
+            var child = new ProcessIdentity(int.MaxValue - 1, rig.Clock.Now, Path.Combine(@"C:\SyntheticOnly", image));
+            job.Run!.Children.Add(child);
+            Marker(job, "SAVED");
+            var result = await Inspect(job, samples: [new ProcessSample(child, int.MaxValue, 0, 1024, 0)]);
+            Check.Equal(RunStage.Saving, result.Stage, "External overlap permission must not bypass owned solver/BBS cleanup");
+            Check.That(result.ProcessAlive, "Known descendant must count as alive");
+        }
     }
 
     private static async Task ForeignSavedMarker()
