@@ -135,8 +135,9 @@ internal sealed class SettingsForm : Form
         {
             rules.EndEdit();
             string path = executable.Text.Trim();
-            if (path.Length != 0 && (!Path.IsPathFullyQualified(path) || !File.Exists(path) || !Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase)))
-                throw new ArgumentException("실제로 존재하는 PowerSI .exe 파일의 전체 경로를 지정하세요.");
+            if (path.Length == 0)
+                throw new ArgumentException("PowerSI 실행 경로가 비어 있습니다. 자동 찾기 또는 찾아보기로 powersi.exe/pwrsi.exe를 지정한 뒤 저장하세요.");
+            path = PowerSiDiscovery.ResolveExecutablePath(path);
             var completedRules = new List<CompletionRule>();
             foreach (DataGridViewRow row in rules.Rows)
             {

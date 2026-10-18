@@ -95,6 +95,7 @@ public interface IProcessProbe
 
 public interface IPowerSiRunner
 {
+    void ValidateConfiguration(AppSettings settings);
     Task<ProcessIdentity> LaunchAsync(JobItem job, AppSettings settings, CancellationToken cancellationToken);
     Task<RunObservation> InspectAsync(JobItem job, AppSettings settings, ProcessSnapshot snapshot, CancellationToken cancellationToken);
     Task RequestSaveAndExitAsync(JobItem job, CancellationToken cancellationToken);

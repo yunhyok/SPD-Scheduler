@@ -95,6 +95,9 @@ internal sealed class MainForm : Form
         layout.Controls.Add(footer, 0, 5);
 
         var rowMenu = new ContextMenuStrip();
+        var jobDetails = new ToolStripMenuItem("작업 상세") { Enabled = false };
+        jobDetails.Click += (_, _) => { if (jobDetails.Tag is Guid id) ShowJobDetails(id); };
+        rowMenu.Items.Add(jobDetails);
         rowMenu.Items.Add("전체 경로 복사 (Ctrl+C)", null, (_, _) => CopyPaths());
         string? logDirectory = null;
         var openLogs = new ToolStripMenuItem("로그 폴더 열기") { Enabled = false };
@@ -102,7 +105,10 @@ internal sealed class MainForm : Form
         rowMenu.Opening += (_, _) =>
         {
             Guid[] selected = SelectedIds().ToArray();
-            logDirectory = selected.Length == 1 ? engine.Jobs.FirstOrDefault(j => j.Id == selected[0])?.Run?.DirectoryPath : null;
+            jobDetails.Enabled = selected.Length == 1;
+            jobDetails.Tag = selected.Length == 1 ? selected[0] : null;
+            JobItem? job = selected.Length == 1 ? engine.Jobs.FirstOrDefault(j => j.Id == selected[0]) : null;
+            logDirectory = job is null ? null : LogDirectory(job);
             openLogs.Enabled = !string.IsNullOrWhiteSpace(logDirectory) && Directory.Exists(logDirectory);
             openLogs.ToolTipText = logDirectory ?? "실행 기록이 있는 작업 하나를 선택하세요.";
         };
@@ -132,7 +138,12 @@ internal sealed class MainForm : Form
                 grid.CurrentCell = grid.Rows[e.RowIndex].Cells[0];
             }
         };
-        grid.CellDoubleClick += async (_, e) => { if (e.RowIndex >= 0 && e.ColumnIndex == 2) await ScheduleAsync(); };
+        grid.CellDoubleClick += async (_, e) =>
+        {
+            if (e.RowIndex < 0) return;
+            if (e.ColumnIndex == 1 && grid.Rows[e.RowIndex].Tag is Guid id) ShowJobDetails(id);
+            else if (e.ColumnIndex == 2) await ScheduleAsync();
+        };
         DragEnter += (_, e) => e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
         DragDrop += async (_, e) =>
         {
@@ -200,8 +211,7 @@ internal sealed class MainForm : Form
             DataGridViewRow row = grid.Rows[rowIndex];
             row.Tag = job.Id;
             row.Cells[0].ToolTipText = job.FilePath;
-            string? runDirectory = job.Run?.DirectoryPath;
-            row.Cells[1].ToolTipText = (job.LastError ?? StatusName(job.Status)) + (string.IsNullOrWhiteSpace(runDirectory) ? "" : $"\n로그 폴더: {runDirectory}");
+            row.Cells[1].ToolTipText = $"{job.LastError ?? StatusName(job.Status)}\n로그 폴더: {LogDirectory(job)}\n두 번 클릭하면 작업 상세를 복사할 수 있습니다.";
             row.Cells[2].ToolTipText = job.ScheduledAt is { } at ? $"{at.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz} ({job.ScheduleTimeZone ?? TimeZoneInfo.Local.Id})" : "예약 없이 대기 순서에 따라 실행";
             row.Selected = selected.Contains(job.Id);
             row.Cells[1].Style.ForeColor = job.Status switch
@@ -217,6 +227,37 @@ internal sealed class MainForm : Form
     }
 
     private IEnumerable<Guid> SelectedIds() => grid.SelectedRows.Cast<DataGridViewRow>().OrderBy(r => r.Index).Select(r => (Guid)r.Tag!);
+
+    private string LogDirectory(JobItem job)
+    {
+        string? directory = job.Run?.DirectoryPath;
+        return string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory) ? Path.Combine(dataDirectory, "logs") : directory;
+    }
+
+    private void ShowJobDetails(Guid id)
+    {
+        JobItem? job = engine.Jobs.FirstOrDefault(j => j.Id == id);
+        if (job is null) return;
+        RunRecord? run = job.Run;
+        string text = string.Join(Environment.NewLine,
+            $"파일: {job.FilePath}",
+            $"작업 ID: {job.Id}",
+            $"상태: {StatusName(job.Status)} ({job.Status})",
+            $"마지막 오류: {job.LastError ?? "없음"}",
+            $"실행 실패 이유: {run?.FailureReason ?? "없음"}",
+            $"실행 ID: {run?.Id.ToString() ?? "없음"}",
+            $"PID: {run?.Process?.Pid.ToString() ?? "없음"}",
+            $"실행 생성 시각: {run?.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz") ?? "없음"}",
+            $"프로세스 시작 시각: {run?.Process?.StartedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz") ?? "없음"}",
+            $"작업 종료 시각: {job.FinishedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz") ?? "없음"}",
+            $"로그 폴더: {LogDirectory(job)}");
+        using var detail = new Form { Text = "작업 상세 · " + job.FileName, ClientSize = new Size(760, 440),
+            StartPosition = FormStartPosition.CenterParent, Font = Font, MinimizeBox = false, ShowInTaskbar = false };
+        detail.Controls.Add(new TextBox { Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
+            ScrollBars = ScrollBars.Both, WordWrap = false, Text = text,
+            AccessibleName = "작업 상세 (Ctrl+A, Ctrl+C로 복사)", BackColor = Color.White });
+        detail.ShowDialog(this);
+    }
 
     private async Task SelectedCommandAsync(Action<Guid> action)
     {

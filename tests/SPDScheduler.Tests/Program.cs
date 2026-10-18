@@ -2,7 +2,8 @@ using SPDScheduler.Tests;
 
 var tests = SchedulerTests.All().Concat(IdleGateTests.All()).Concat(ScriptTests.All())
     .Concat(RunnerRecoveryTests.All()).Concat(LogEvidenceTests.All()).Concat(QueueValidationTests.All()).Concat(WorkerTests.All())
-    .Concat(ProcessTreeTests.All()).Concat(SettingsMigrationTests.All()).Concat(StatusReaderTests.All()).Concat(BbsPolicyTests.All()).ToArray();
+    .Concat(ProcessTreeTests.All()).Concat(SettingsMigrationTests.All()).Concat(StatusReaderTests.All()).Concat(BbsPolicyTests.All())
+    .Concat(PathConfigurationTests.All()).ToArray();
 var failures = 0;
 foreach (var (name, test) in tests)
 {

@@ -73,6 +73,7 @@ internal static class Program
 
 internal sealed class SafeModeRunner : IPowerSiRunner
 {
+    public void ValidateConfiguration(AppSettings settings) { }
     public Task<ProcessIdentity> LaunchAsync(JobItem job, AppSettings settings, CancellationToken cancellationToken) =>
         Task.FromException<ProcessIdentity>(new InvalidOperationException("안전 모드에서는 PowerSI를 실행하지 않습니다."));
     public Task<RunObservation> InspectAsync(JobItem job, AppSettings settings, ProcessSnapshot snapshot, CancellationToken cancellationToken) =>

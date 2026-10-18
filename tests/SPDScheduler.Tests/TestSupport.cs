@@ -50,6 +50,9 @@ internal sealed class FakeRunner(FakeProbe probe, TestClock clock) : IPowerSiRun
     public bool ThrowAfterSpawn { get; set; }
     public Action<JobItem>? BeforeLaunch { get; set; }
     public Action<JobItem>? BeforeSave { get; set; }
+    public Action<AppSettings>? BeforeValidateConfiguration { get; set; }
+
+    public void ValidateConfiguration(AppSettings settings) => BeforeValidateConfiguration?.Invoke(settings);
 
     public Task<ProcessIdentity> LaunchAsync(JobItem job, AppSettings settings, CancellationToken cancellationToken)
     {

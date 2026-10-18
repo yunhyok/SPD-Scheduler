@@ -26,12 +26,15 @@ public sealed class PowerSiRunner : IPowerSiRunner
     private sealed record Freshness(Guid RunId, bool SawNonCompletedUi, bool Started, bool RuleStarted);
     public sealed record LogEvidence(bool Started, bool Completed, bool NewerStart, bool Blocked, bool Reliable);
 
+    public void ValidateConfiguration(AppSettings settings) =>
+        settings.PowerSiPath = PowerSiDiscovery.ResolveExecutablePath(settings.PowerSiPath);
+
     public async Task<ProcessIdentity> LaunchAsync(JobItem job, AppSettings settings, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        string executable = Path.GetFullPath(settings.PowerSiPath);
+        ValidateConfiguration(settings);
+        string executable = settings.PowerSiPath;
         string spd = Path.GetFullPath(job.FilePath);
-        if (!WindowsProcessProbe.IsPowerSi(executable) || !File.Exists(executable)) throw new IOException("Select an installed PowerSI executable.");
         if (!File.Exists(spd) || !Path.GetExtension(spd).Equals(".spd", StringComparison.OrdinalIgnoreCase)) throw new IOException("SPD file is unavailable.");
         var run = job.Run ??= new RunRecord();
         if (run.Process != null) throw new InvalidOperationException("This run already has a process identity.");

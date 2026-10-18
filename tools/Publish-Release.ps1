@@ -9,7 +9,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$version = '0.1.4'
+$version = '0.1.5'
 $installer = (Resolve-Path -LiteralPath $InstallerPath).Path
 $manifestFile = Join-Path (Split-Path $installer) 'build-manifest.json'
 $hashFile = "$installer.sha256"

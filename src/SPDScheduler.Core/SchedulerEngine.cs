@@ -121,6 +121,14 @@ public sealed class SchedulerEngine
         SettingsValidator.Validate(Settings);
         if (Jobs.Any(j => j.Status == JobStatus.NeedsAttention))
             throw new InvalidOperationException("확인 필요 작업을 먼저 정리하세요.");
+        try { _runner.ValidateConfiguration(Settings); }
+        catch (Exception ex)
+        {
+            IsArmed = false;
+            StatusText = "실행 설정 확인 필요 · " + ex.Message;
+            Changed?.Invoke(this, EventArgs.Empty);
+            throw;
+        }
         Save();
         _persistenceFailed = false;
         IsArmed = true;
@@ -187,7 +195,9 @@ public sealed class SchedulerEngine
                 .ThenBy(j => j.ScheduledAt ?? DateTimeOffset.MaxValue).ThenBy(j => j.Order).FirstOrDefault();
             if (next is null)
             {
-                StatusText = Jobs.Any(j => j.Status == JobStatus.Queued) ? "예약 시간 대기 중" : "목록 완료 · 새 파일을 추가할 수 있습니다.";
+                int failures = Jobs.Count(j => j.Status == JobStatus.Failed);
+                StatusText = Jobs.Any(j => j.Status == JobStatus.Queued) ? "예약 시간 대기 중" :
+                    failures > 0 ? $"대기 작업 없음 · 실패 {failures}건 · 실패 상태를 더블클릭하면 원인을 볼 수 있습니다." : "목록 완료 · 새 파일을 추가할 수 있습니다.";
                 return;
             }
             var decision = _gate.Evaluate(snapshot, Settings);
@@ -211,6 +221,8 @@ public sealed class SchedulerEngine
                 StatusText = finalDecision.Reason;
                 return;
             }
+            // Recheck shared configuration before consuming a queued job or creating its run record.
+            _runner.ValidateConfiguration(Settings);
             next.Run = new RunRecord { CreatedAt = now };
             next.Run.DirectoryPath = Path.Combine(_store.DataDirectory, "runs", next.Run.Id.ToString("N"));
             next.Status = JobStatus.Starting;

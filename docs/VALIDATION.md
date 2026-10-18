@@ -13,6 +13,8 @@
 | 사례 | 통과 조건 |
 |---|---|
 | GUI 시작 | `-b` 없이 새 PowerSI 창이 표시되고 생성된 `-tcl` 스크립트가 실행됨 |
+| 실행 경로 | 빈 경로에서 시작하면 탐색 결과가 실제 설정에 저장됨; 설치 없음·잘못된 명시 경로는 시작 전에 안내; 예약 대기 중 실행 파일이 사라져도 작업·예약을 대기로 보존 |
+| 실패 상세 | 실패 상태 더블클릭 또는 우클릭 작업 상세로 오류를 복사; 실행 폴더 생성 전 실패는 전체 스케줄러 로그 폴더로 연결; 후속 확인에서 실패 건수를 유지 |
 | 정상 시뮬레이션 | 파일 열기, 실제 시작, 모드에 맞는 완료, 저장, 자체 PowerSI·solver 종료를 각각 확인 |
 | 완료 판정 | 명령 반환이나 이전 완료 출력만으로 저장하지 않음; START→DONE→START는 다시 완료할 때까지 보류 |
 | 기존 PowerSI | 실행 중·일시정지·라이선스 대기·유휴 상태에서 기대대로 대기/진행; 외부 PowerSI 저장·종료 없음 |
@@ -40,14 +42,14 @@
 
 ```powershell
 ./tools/Publish-Release.ps1 `
-  -InstallerPath ./artifacts/installer/SPD-Scheduler-Setup-0.1.4.exe `
+  -InstallerPath ./artifacts/installer/SPD-Scheduler-Setup-0.1.5.exe `
   -EvidencePath C:/Validation/SPD-Scheduler-evidence.json `
   -ValidateOnly
 ```
 
-같은 명령에서 `-ValidateOnly`를 제외하면 `v0.1.4` 정식 Release에 설치파일과 SHA-256을 게시합니다. 스크립트는 깨끗한 현재 HEAD, 빌드 manifest, 커밋·해시 일치를 검사합니다. `-EvidencePath`를 제공하면 증거와 설치파일의 일치 및 필수 통과 결과도 검사합니다. 실제 검증 후 소스나 설치파일을 바꾸면 다시 빌드·검증해야 합니다. 이 검사는 사람의 실측을 대체하지 않습니다.
+같은 명령에서 `-ValidateOnly`를 제외하면 `v0.1.5` 정식 Release에 설치파일과 SHA-256을 게시합니다. 스크립트는 깨끗한 현재 HEAD, 빌드 manifest, 커밋·해시 일치를 검사합니다. `-EvidencePath`를 제공하면 증거와 설치파일의 일치 및 필수 통과 결과도 검사합니다. 실제 검증 후 소스나 설치파일을 바꾸면 다시 빌드·검증해야 합니다. 이 검사는 사람의 실측을 대체하지 않습니다.
 
-사용자 요청에 따라 실측 전에도 설치·업데이트용 정식 Release를 게시할 수 있습니다. 이 경우 `-EvidencePath`를 생략하며, 릴리스 설명에 PowerSI 연동 검증이 아직 남아 있다고 자동 표시합니다. 미검증 증거를 통과로 변경하지 않습니다. 변경 설명은 `-NotesPath docs/releases/v0.1.4.md`로 지정할 수 있습니다.
+사용자 요청에 따라 실측 전에도 설치·업데이트용 정식 Release를 게시할 수 있습니다. 이 경우 `-EvidencePath`를 생략하며, 릴리스 설명에 PowerSI 연동 검증이 아직 남아 있다고 자동 표시합니다. 미검증 증거를 통과로 변경하지 않습니다. 변경 설명은 `-NotesPath docs/releases/v0.1.5.md`로 지정할 수 있습니다.
 
 ## 현 개발 환경에서의 검증 범위
 
