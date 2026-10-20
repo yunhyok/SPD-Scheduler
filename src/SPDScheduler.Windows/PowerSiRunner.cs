@@ -11,6 +11,17 @@ namespace SPDScheduler.Windows;
 public sealed class PowerSiRunner : IPowerSiRunner
 {
     private readonly ConcurrentDictionary<Guid, EvidenceState> evidence = new();
+    private readonly Func<ProcessIdentity, (bool Alive, bool Readable, string? Detail)> identityState;
+    private readonly Func<ProcessIdentity, CancellationToken, Task<string?>> readStatus;
+
+    public PowerSiRunner() : this(WindowsProcessProbe.IdentityState, WindowsTextWorker.ReadAsync) { }
+
+    internal PowerSiRunner(Func<ProcessIdentity, (bool Alive, bool Readable, string? Detail)> identityState,
+        Func<ProcessIdentity, CancellationToken, Task<string?>> readStatus)
+    {
+        this.identityState = identityState;
+        this.readStatus = readStatus;
+    }
 
     private sealed class EvidenceState
     {
@@ -77,13 +88,13 @@ public sealed class PowerSiRunner : IPowerSiRunner
         if (run.Process == null) return new(RunStage.Unknown, "Run process identity is missing.", false);
         RefreshChildren(run, snapshot);
         var owned = snapshot.Processes.Where(p => IsOwned(run, p.Identity)).ToArray();
-        var identities = run.Children.Prepend(run.Process).Select(WindowsProcessProbe.IdentityState).ToArray();
-        bool identitiesReadable = identities.All(identity => identity.Readable);
-        if (!identitiesReadable) return new(RunStage.Unknown, "An owned process identity cannot be read; its run is preserved and retry is blocked.", true);
-        bool alive = owned.Length != 0 || identities.Any(identity => identity.Alive);
+        var identities = run.Children.Prepend(run.Process).Select(identity => (Identity: identity, State: identityState(identity))).ToArray();
+        bool identitiesReadable = identities.All(identity => identity.State.Readable);
+        bool alive = !identitiesReadable || owned.Length != 0 || identities.Any(identity => identity.State.Alive);
         bool activity = false;
         var state = evidence.GetOrAdd(run.Id, _ => LoadEvidence(run));
         InvalidateCompletion(run, state);
+        if (!identities[0].State.Readable) return PendingIdentity();
         foreach (var sample in owned)
         {
             if (state.Counters.TryGetValue(sample.Identity.Pid, out var before))
@@ -94,7 +105,8 @@ public sealed class PowerSiRunner : IPowerSiRunner
         if (markers.Contains("EXIT_FAILED")) return new(RunStage.Unknown, "Saving succeeded but PowerSI rejected exit; inspect this run's error.txt and GUI.", alive, activity);
         if (markers.Contains("SAVED"))
         {
-            if (!snapshot.Complete || !identitiesReadable) return new(RunStage.Saving, "Save is confirmed; process exit cannot yet be confirmed.", true, activity);
+            if (!identitiesReadable) return PendingIdentity();
+            if (!snapshot.Complete) return new(RunStage.Saving, "Save is confirmed; process exit cannot yet be confirmed.", true, activity);
             return new(alive ? RunStage.Saving : RunStage.Succeeded,
                 alive ? "Save is confirmed; waiting for this run and its solver processes to exit." : "Save confirmed and owned processes exited.", alive, activity);
         }
@@ -103,11 +115,13 @@ public sealed class PowerSiRunner : IPowerSiRunner
             return new(state.Started || run.StartedObserved ? RunStage.RuntimeFailed : RunStage.StartFailed,
                 "The current-run Tcl command reported an error; see this run's error.txt.", alive, activity);
         if (markers.Contains("BEGIN_FAILED")) return new(RunStage.RuntimeFailed, "begin simulation failed; solver activity is uncertain and the process is preserved.", alive, activity);
-        if (TokenMatches(run, "SAVE_EXIT", "control.txt")) return new(RunStage.Saving, "Save/exit was requested; waiting for SAVED and process exit.", alive, activity);
+        if (TokenMatches(run, "SAVE_EXIT", "control.txt")) return identitiesReadable
+            ? new(RunStage.Saving, "Save/exit was requested; waiting for SAVED and process exit.", alive, activity) : PendingIdentity();
         if (!alive) return new(RunStage.Unknown, "Process exited without a current-run save confirmation.", false, activity);
-        if (!markers.Contains("OPENED")) return new(RunStage.Starting, "Waiting for the new GUI to execute its Tcl script.", true, activity);
+        if (!markers.Contains("OPENED")) return identitiesReadable
+            ? new(RunStage.Starting, "Waiting for the new GUI to execute its Tcl script.", true, activity) : PendingIdentity();
 
-        var status = await WindowsTextWorker.ReadAsync(run.Process, cancellationToken).ConfigureAwait(false);
+        var status = await readStatus(run.Process, cancellationToken).ConfigureAwait(false);
         bool uiCompleted = false;
         var uiSignal = WindowsProcessProbe.ClassifyStatus(status);
         if (status != null)
@@ -122,6 +136,7 @@ public sealed class PowerSiRunner : IPowerSiRunner
             {
                 run.StartedObserved |= state.Started;
                 await PersistEvidenceAsync(run, state, cancellationToken).ConfigureAwait(false);
+                if (!identitiesReadable) return PendingIdentity();
                 return new(RunStage.Running, "PowerSI reports an active or blocked simulation; no save or next job will start.", true, activity);
             }
         }
@@ -143,6 +158,7 @@ public sealed class PowerSiRunner : IPowerSiRunner
         state.Completed = state.CompletedViaUi || log.Completed;
         run.StartedObserved |= state.Started;
         await PersistEvidenceAsync(run, state, cancellationToken).ConfigureAwait(false);
+        if (!identitiesReadable) return PendingIdentity();
         if (state.Completed && snapshot.Complete)
         {
             state.CompletionAt = DateTimeOffset.UtcNow;
@@ -152,6 +168,13 @@ public sealed class PowerSiRunner : IPowerSiRunner
         }
         return new(state.Started ? RunStage.Running : RunStage.Starting,
             markers.Contains("BEGIN_RETURNED") ? "begin simulation returned; completion is not yet confirmed." : "Waiting for fresh simulation status or a matching workflow log rule.", true, activity);
+
+        RunObservation PendingIdentity()
+        {
+            string detail = string.Join("; ", identities.Where(item => !item.State.Readable).Select(item =>
+                $"PID {item.Identity.Pid} ({Path.GetFileName(item.Identity.ImagePath)}): {item.State.Detail ?? "조회 실패"}"));
+            return new(RunStage.ObservationPending, "프로세스 확인 재시도 대기 · " + detail, true, activity);
+        }
     }
 
     public async Task RequestSaveAndExitAsync(JobItem job, CancellationToken cancellationToken)
@@ -159,10 +182,14 @@ public sealed class PowerSiRunner : IPowerSiRunner
         var run = job.Run ?? throw new InvalidOperationException("Run record is missing.");
         if (TokenMatches(run, "SAVE_EXIT", "control.txt")) { run.SaveRequested = true; return; }
         if (!TokenMatches(run, "COMPLETION_OBSERVED", "completion.txt")) throw new InvalidOperationException("Fresh completion evidence is required before saving and exiting.");
-        if (run.Process == null || !WindowsProcessProbe.IdentityMatches(run.Process)) throw new InvalidOperationException("Owned PowerSI identity changed.");
+        if (run.Process == null) throw new InvalidOperationException("Owned PowerSI identity is missing.");
+        var identity = identityState(run.Process);
+        // Without a delivered control token, the next inspection must observe completion again.
+        if (!identity.Readable) return;
+        if (!identity.Alive) throw new InvalidOperationException("Owned PowerSI identity changed.");
         if (!evidence.TryGetValue(run.Id, out var state) || !state.Completed || state.CompletionAt == null ||
             DateTimeOffset.UtcNow - state.CompletionAt > TimeSpan.FromSeconds(10)) throw new InvalidOperationException("Completion evidence must be observed again before saving.");
-        var status = await WindowsTextWorker.ReadAsync(run.Process, cancellationToken).ConfigureAwait(false);
+        var status = await readStatus(run.Process, cancellationToken).ConfigureAwait(false);
         if (WindowsProcessProbe.ClassifyStatus(status) is ProcessSignal.Running or ProcessSignal.Suspended or ProcessSignal.LicenseWaiting or ProcessSignal.Error)
         {
             InvalidateCompletion(run, state);
@@ -193,16 +220,16 @@ public sealed class PowerSiRunner : IPowerSiRunner
         var run = job.Run ?? throw new InvalidOperationException("Run record is missing.");
         RefreshChildren(run, snapshot);
         bool alive = snapshot.Processes.Any(p => IsOwned(run, p.Identity));
-        var identities = (run.Process == null ? run.Children : run.Children.Prepend(run.Process)).Select(WindowsProcessProbe.IdentityState).ToArray();
+        var identities = (run.Process == null ? run.Children : run.Children.Prepend(run.Process)).Select(identityState).ToArray();
         alive |= identities.Any(identity => identity.Alive);
-        if (run.Children.Select(WindowsProcessProbe.IdentityState).Any(identity => identity.Alive || !identity.Readable))
+        if (run.Children.Select(identityState).Any(identity => identity.Alive || !identity.Readable))
             return new(CleanupState.Unsafe, "An owned solver child is alive or unreadable; cleanup is blocked.");
         if (!alive && snapshot.Complete && identities.All(identity => identity.Readable)) return new(CleanupState.Closed, "All owned processes have exited.");
         if (!ReadMarkers(run).Contains("START_REJECTED") || run.StartedObserved || run.SaveRequested)
             return new(CleanupState.Unsafe, "No confirmed rejected start; the PowerSI process is preserved.");
         if (snapshot.Processes.Any(p => run.Children.Any(child => WindowsProcessProbe.SameIdentity(child, p.Identity))))
             return new(CleanupState.Unsafe, "An owned solver child remains; cleanup waits for manual confirmation.");
-        if (!snapshot.Complete || run.Process == null || !WindowsProcessProbe.IdentityMatches(run.Process))
+        if (!snapshot.Complete || run.Process == null || !identityState(run.Process).Alive)
             return new(CleanupState.Unsafe, "Process ownership cannot be confirmed.");
         if (ReadMarkers(run).Contains("CLEANUP_FAILED")) return new(CleanupState.Unsafe, "PowerSI rejected no-save cleanup; inspect its GUI.");
         await WriteTokenAsync(run, "ABORT_NO_SAVE", "control.txt", cancellationToken).ConfigureAwait(false);

@@ -23,6 +23,8 @@ internal static class SchedulerTests
         yield return ("Unknown startup timeout holds without cleanup", UnknownStartup);
         yield return ("Startup confirmation timeout preserves the owned process", StartupTimeout);
         yield return ("Observed solver activity prevents a startup timeout", ActiveRunHasNoStartupTimeout);
+        yield return ("Temporary identity observation failure resumes the armed queue after recovery", ObservationRecovers);
+        yield return ("A previously held run can complete after upgrade without replay or auto arming", HeldRunRecovers);
         yield return ("Confirmed runtime failure cleans own identity then continues", () => FailureContinuesAfterCleanup(RunStage.RuntimeFailed));
         yield return ("Confirmed start failure cleans own identity then continues", () => FailureContinuesAfterCleanup(RunStage.StartFailed));
         yield return ("Unsafe cleanup pauses and blocks the next job", UnsafeCleanupHolds);
@@ -59,6 +61,58 @@ internal static class SchedulerTests
         rig.Engine.Start();
         await rig.TickAsync();
         Check.Equal(1, rig.Runner.Launched.Count, "Start must arm queued work");
+    }
+
+    private static async Task ObservationRecovers()
+    {
+        using var rig = new TestRig();
+        await rig.InitializeAsync();
+        var first = rig.Add("first.spd");
+        var next = rig.Add("next.spd");
+        rig.Engine.Start();
+        await rig.TickAsync();
+        rig.Runner.Observation = new(RunStage.ObservationPending, "Synthetic identity read failed; retrying", true);
+        rig.Clock.Advance(TimeSpan.FromMinutes(20));
+        await rig.TickAsync(3);
+        Check.That(rig.Engine.IsArmed, "A recoverable read failure must not permanently disarm the queue");
+        Check.Equal(JobStatus.Starting, first.Status, "Do not turn a missing observation into failed startup");
+        Check.Equal(1, rig.Runner.Launched.Count, "The following job stays blocked while identity is unknown");
+        Check.Equal(0, rig.Runner.SaveRequests.Count, "Unreadability does not authorize save");
+        Check.Equal(0, rig.Runner.CleanupIdentities.Count, "Unreadability does not authorize cleanup");
+        rig.Runner.Observation = new(RunStage.ReadyToSave, "Recovered current-run completion", true);
+        await rig.TickAsync();
+        Check.That(first.LastError == null, "Recovered observation clears the transient diagnostic");
+        Check.Equal(first.Id, rig.Runner.SaveRequests.Single(), "Recover then save the same run");
+        rig.Runner.Observation = new(RunStage.Succeeded, "Saved and closed", false);
+        rig.Probe.Processes.Clear();
+        await rig.TickAsync(2);
+        Check.Equal(JobStatus.Completed, first.Status, "Recovered run completes");
+        Check.Equal(next.Id, rig.Runner.Launched.Last(), "The next job must start without another Start click");
+    }
+
+    private static async Task HeldRunRecovers()
+    {
+        using var rig = new TestRig();
+        var identity = new ProcessIdentity(12345, rig.Clock.Now, @"C:\SyntheticOnly\PowerSI.exe");
+        var first = new JobItem { FilePath = rig.CreateFile("held.spd"), Status = JobStatus.NeedsAttention,
+            LastError = "An owned process identity cannot be read", Run = new RunRecord { Process = identity, StartedObserved = true } };
+        await rig.InitializeAsync(new QueueDocument { Jobs = [first] });
+        first = rig.Engine.Jobs.Single();
+        rig.Add("next.spd");
+        rig.Probe.Processes.Add(new ProcessSample(identity, 0, 0, 0, 0));
+        rig.Runner.Observation = new(RunStage.ReadyToSave, "Recovered current-run completion", true);
+        await rig.TickAsync();
+        Check.Equal(JobStatus.Saving, first.Status, "A previously held run must resume reconciliation");
+        Check.That(first.LastError == null, "Remove the stale hold reason");
+        rig.Runner.Observation = new(RunStage.Succeeded, "Saved and closed", false);
+        rig.Probe.Processes.Clear();
+        await rig.TickAsync(2);
+        Check.Equal(JobStatus.Completed, first.Status, "Held run can finish after update");
+        Check.That(!rig.Engine.IsArmed, "Restart remains paused until the user starts the queue");
+        Check.Equal(0, rig.Runner.Launched.Count, "Do not replay the old run or launch a queued job during recovery");
+        rig.Engine.Start();
+        await rig.TickAsync();
+        Check.Equal(1, rig.Runner.Launched.Count, "Explicit Start resumes queued work after recovery");
     }
 
     private static async Task ScheduledPriority()

@@ -1,6 +1,9 @@
 using System.Diagnostics;
+using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
 using SPDScheduler.Core;
 
 namespace SPDScheduler.Windows;
@@ -140,9 +143,11 @@ public sealed class WindowsProcessProbe : IProcessProbe
         Path.GetFileNameWithoutExtension(name).Equals("powersi", StringComparison.OrdinalIgnoreCase) ||
         Path.GetFileNameWithoutExtension(name).Equals("pwrsi", StringComparison.OrdinalIgnoreCase);
 
-    internal static ProcessIdentity ReadIdentity(Process process) => new(process.Id,
-        new DateTimeOffset(process.StartTime.ToUniversalTime()),
-        Path.GetFullPath(process.MainModule?.FileName ?? throw new IOException("Process image is unavailable.")));
+    internal static ProcessIdentity ReadIdentity(Process process)
+    {
+        var handle = process.SafeHandle;
+        return new(process.Id, ReadCreationTime(handle), ReadImagePath(handle));
+    }
 
     internal static bool SameIdentity(ProcessIdentity first, ProcessIdentity second) =>
         first.Pid == second.Pid && first.StartedAt == second.StartedAt &&
@@ -151,17 +156,67 @@ public sealed class WindowsProcessProbe : IProcessProbe
     internal static bool IdentityMatches(ProcessIdentity identity)
         => IdentityState(identity).Alive;
 
-    internal static (bool Alive, bool Readable) IdentityState(ProcessIdentity identity)
+    internal static (bool Alive, bool Readable, string? Detail) IdentityState(ProcessIdentity identity)
     {
+        using var handle = OpenProcess(0x1000 | 0x100000, false, identity.Pid);
+        if (handle.IsInvalid)
+        {
+            int error = Marshal.GetLastWin32Error();
+            if (error == 87) return (false, true, $"PID {identity.Pid}: process no longer exists.");
+            return (false, false, IdentityFailure(identity, "OpenProcess", new Win32Exception(error)));
+        }
+        return EvaluateIdentity(identity, () => HasExited(handle), () => ReadCreationTime(handle), () => ReadImagePath(handle));
+    }
+
+    internal static (bool Alive, bool Readable, string? Detail) EvaluateIdentity(ProcessIdentity identity,
+        Func<bool> hasExited, Func<DateTimeOffset> readCreationTime, Func<string> readImagePath)
+    {
+        string stage = "exit state";
         try
         {
-            using var process = Process.GetProcessById(identity.Pid);
-            return (!process.HasExited && SameIdentity(identity, ReadIdentity(process)), true);
+            if (hasExited()) return (false, true, $"PID {identity.Pid}: process exited.");
+            stage = "creation time";
+            if (readCreationTime() != identity.StartedAt) return (false, true, $"PID {identity.Pid}: PID was reused.");
+            stage = "image path";
+            bool matches = string.Equals(identity.ImagePath, readImagePath(), StringComparison.OrdinalIgnoreCase);
+            stage = "exit state";
+            if (hasExited()) return (false, true, $"PID {identity.Pid}: process exited during identity read.");
+            return (matches, true, matches ? null : $"PID {identity.Pid}: process image changed.");
         }
-        catch (ArgumentException) { return (false, true); }
-        catch (InvalidOperationException) { return (false, false); }
-        catch (System.ComponentModel.Win32Exception) { return (false, false); }
-        catch (IOException) { return (false, false); }
+        catch (Exception exception) when (exception is Win32Exception or IOException or InvalidOperationException or ArgumentException)
+        {
+            // A failed image/time query may race normal process exit; only the pinned handle can prove it.
+            try { if (hasExited()) return (false, true, $"PID {identity.Pid}: process exited during identity read."); }
+            catch (Exception retry) when (retry is Win32Exception or IOException or InvalidOperationException or ArgumentException) { }
+            return (false, false, IdentityFailure(identity, stage, exception));
+        }
+    }
+
+    private static string IdentityFailure(ProcessIdentity identity, string stage, Exception exception) =>
+        $"PID {identity.Pid} ({Path.GetFileName(identity.ImagePath)}), {stage}: " +
+        (exception is Win32Exception native ? $"Win32 {native.NativeErrorCode}: " : "") + exception.Message;
+
+    private static bool HasExited(SafeProcessHandle handle)
+    {
+        uint result = WaitForSingleObject(handle, 0);
+        if (result == 0) return true;
+        if (result == 258) return false;
+        if (result == uint.MaxValue) throw new Win32Exception(Marshal.GetLastWin32Error());
+        throw new IOException($"Unexpected process wait result: {result}.");
+    }
+
+    private static DateTimeOffset ReadCreationTime(SafeProcessHandle handle)
+    {
+        if (!GetProcessTimes(handle, out long creation, out _, out _, out _)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        return new DateTimeOffset(DateTime.FromFileTimeUtc(creation));
+    }
+
+    private static string ReadImagePath(SafeProcessHandle handle)
+    {
+        var path = new StringBuilder(32768);
+        int length = path.Capacity;
+        if (!QueryFullProcessImageName(handle, 0, path, ref length)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        return Path.GetFullPath(path.ToString());
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -182,6 +237,12 @@ public sealed class WindowsProcessProbe : IProcessProbe
     }
 
     [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern SafeProcessHandle OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, int pid);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(SafeProcessHandle handle, uint milliseconds);
+    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetProcessTimes(SafeProcessHandle handle, out long creationTime, out long exitTime, out long kernelTime, out long userTime);
+    [DllImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryFullProcessImageName(SafeProcessHandle handle, uint flags, StringBuilder path, ref int size);
     [DllImport("kernel32.dll")] private static extern uint GetActiveProcessorCount(ushort groupNumber);
     [DllImport("kernel32.dll", EntryPoint = "Process32FirstW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)] private static extern bool Process32First(IntPtr snapshot, ref ProcessEntry entry);

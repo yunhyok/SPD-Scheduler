@@ -80,7 +80,7 @@ public sealed record ProcessSnapshot(DateTimeOffset CapturedAt,
 
 public sealed record GateDecision(bool CanStart, bool InferredIdle, string Reason);
 
-public enum RunStage { Starting, Running, ReadyToSave, Saving, Succeeded, StartFailed, RuntimeFailed, SaveFailed, Unknown }
+public enum RunStage { Starting, Running, ReadyToSave, Saving, Succeeded, StartFailed, RuntimeFailed, SaveFailed, Unknown, ObservationPending }
 
 public sealed record RunObservation(RunStage Stage, string Detail, bool ProcessAlive,
     bool HasActivity = false);

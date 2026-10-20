@@ -280,6 +280,10 @@ public sealed class SchedulerEngine
         StatusText = observation.Detail;
         switch (observation.Stage)
         {
+            case RunStage.ObservationPending:
+                if (job.LastError != observation.Detail) _store.AppendLog(observation.Detail, job.Id);
+                job.LastError = observation.Detail;
+                break;
             case RunStage.Starting:
                 if (_clock.GetUtcNow() - run.CreatedAt >= TimeSpan.FromMinutes(Settings.StartTimeoutMinutes))
                     Attention(job, "시작 확인 시간이 지났습니다. 계산/라이선스/로그 상태를 직접 확인하세요. " + observation.Detail);
@@ -290,9 +294,10 @@ public sealed class SchedulerEngine
                 job.LastError = null;
                 break;
             case RunStage.ReadyToSave:
+                job.Status = JobStatus.Saving;
+                job.LastError = null;
                 if (!run.SaveRequested)
                 {
-                    job.Status = JobStatus.Saving;
                     run.SaveRequested = true;
                     Save();
                 }
@@ -301,6 +306,7 @@ public sealed class SchedulerEngine
                 break;
             case RunStage.Saving:
                 job.Status = JobStatus.Saving;
+                job.LastError = null;
                 break;
             case RunStage.Succeeded:
                 if (observation.ProcessAlive) Attention(job, "저장 후 PowerSI/solver 종료가 확인되지 않았습니다.");
