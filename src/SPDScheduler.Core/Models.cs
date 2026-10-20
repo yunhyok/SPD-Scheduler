@@ -13,6 +13,7 @@ public sealed class JobItem
     public RunRecord? Run { get; set; }
     public string? LastError { get; set; }
     public DateTimeOffset? FinishedAt { get; set; }
+    public bool CompletedManually { get; set; }
     public string FileName => Path.GetFileName(FilePath);
 }
 

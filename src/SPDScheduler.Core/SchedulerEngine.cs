@@ -75,6 +75,48 @@ public sealed class SchedulerEngine
         Save();
     }
 
+    public void ResolveManually(Guid id, Guid? expectedRunId, bool remove)
+    {
+        if (!_tick.Wait(0)) throw new InvalidOperationException("상태 확인 중입니다. 확인이 끝난 뒤 다시 시도하세요.");
+        try
+        {
+            var job = Get(id);
+            if (job.Status is not (JobStatus.NeedsAttention or JobStatus.Failed) || job.Run?.Id != expectedRunId)
+                throw new InvalidOperationException("작업 상태가 변경되었습니다. 목록을 다시 확인한 뒤 수동 정리하세요.");
+            IsArmed = false;
+            _gate.Reset();
+            _resolved.Remove(id);
+            string action = remove ? "목록에서 제거" : "완료 처리";
+            _store.AppendLog($"사용자 수동 정리 요청 · {action} · 이전 상태: {job.Status} · 실행 ID: {job.Run?.Id.ToString() ?? "없음"} · " +
+                $"PID: {job.Run?.Process?.Pid.ToString() ?? "없음"} · 이전 오류: {job.LastError ?? "없음"} · PowerSI 명령 없음", id);
+            var previousStatus = job.Status;
+            var previousFinishedAt = job.FinishedAt;
+            bool previousManual = job.CompletedManually;
+            int index = Document.Jobs.IndexOf(job);
+            if (remove) Document.Jobs.RemoveAt(index);
+            else
+            {
+                job.Status = JobStatus.Completed;
+                job.CompletedManually = true;
+                job.FinishedAt = _clock.GetUtcNow();
+            }
+            StatusText = "수동 정리 · " + action + " · 후속 작업은 시작을 누르면 진행합니다.";
+            try { Save(); }
+            catch
+            {
+                if (remove) Document.Jobs.Insert(index, job);
+                else
+                {
+                    job.Status = previousStatus;
+                    job.CompletedManually = previousManual;
+                    job.FinishedAt = previousFinishedAt;
+                }
+                throw;
+            }
+        }
+        finally { _tick.Release(); }
+    }
+
     public void SetSchedule(Guid id, DateTimeOffset? scheduledAt)
     {
         var job = Get(id);
@@ -90,6 +132,7 @@ public sealed class SchedulerEngine
         EnsureResolved(job);
         job.Status = JobStatus.Queued;
         job.Run = null;
+        job.CompletedManually = false;
         job.LastError = null;
         job.FinishedAt = null;
         _resolved.Remove(id);

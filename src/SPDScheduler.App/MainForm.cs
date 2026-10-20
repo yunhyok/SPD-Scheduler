@@ -56,7 +56,7 @@ internal sealed class MainForm : Form
 
         var tools = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty };
         tools.Controls.Add(MakeButton("파일 추가", AddFilesAsync));
-        tools.Controls.Add(MakeButton("제거", () => SelectedCommandAsync(engine.Remove)));
+        tools.Controls.Add(MakeButton("제거", () => ReconcileSelectionAsync(remove: true)));
         tools.Controls.Add(MakeButton("예약", ScheduleAsync));
         tools.Controls.Add(MakeButton("예약 해제", () => SelectedCommandAsync(id => engine.SetSchedule(id, null))));
         tools.Controls.Add(MakeButton("완료 정리", async () => await command(() =>
@@ -101,10 +101,15 @@ internal sealed class MainForm : Form
         rowMenu.Items.Add("전체 경로 복사 (Ctrl+C)", null, (_, _) => CopyPaths());
         string? logDirectory = null;
         var openLogs = new ToolStripMenuItem("로그 폴더 열기") { Enabled = false };
+        var manualComplete = new ToolStripMenuItem("수동 완료 처리…") { Enabled = false };
+        manualComplete.Click += async (_, _) => await ReconcileSelectionAsync(remove: false);
         rowMenu.Items.Add(openLogs);
         rowMenu.Opening += (_, _) =>
         {
             Guid[] selected = SelectedIds().ToArray();
+            JobItem[] selectedJobs = engine.Jobs.Where(j => selected.Contains(j.Id)).ToArray();
+            manualComplete.Enabled = selected.Length > 0 && selectedJobs.Length == selected.Length &&
+                selectedJobs.All(j => j.Status is JobStatus.NeedsAttention or JobStatus.Failed);
             jobDetails.Enabled = selected.Length == 1;
             jobDetails.Tag = selected.Length == 1 ? selected[0] : null;
             JobItem? job = selected.Length == 1 ? engine.Jobs.FirstOrDefault(j => j.Id == selected[0]) : null;
@@ -126,8 +131,9 @@ internal sealed class MainForm : Form
         rowMenu.Items.Add("예약 변경 (F2)", null, async (_, _) => await ScheduleAsync());
         rowMenu.Items.Add("다시 대기", null, async (_, _) => await SelectedCommandAsync(engine.Retry));
         rowMenu.Items.Add("건너뛰기", null, async (_, _) => await SelectedCommandAsync(engine.Skip));
+        rowMenu.Items.Add(manualComplete);
         rowMenu.Items.Add(new ToolStripSeparator());
-        rowMenu.Items.Add("제거 (Delete)", null, async (_, _) => await SelectedCommandAsync(engine.Remove));
+        rowMenu.Items.Add("제거 (Delete)", null, async (_, _) => await ReconcileSelectionAsync(remove: true));
         grid.ContextMenuStrip = rowMenu;
         grid.CellMouseDown += (_, e) =>
         {
@@ -161,7 +167,7 @@ internal sealed class MainForm : Form
         {
             if (e.Control && e.KeyCode == Keys.O) { e.SuppressKeyPress = true; await AddFilesAsync(); }
             else if (e.Control && e.KeyCode == Keys.C) { e.SuppressKeyPress = true; CopyPaths(); }
-            else if (e.KeyCode == Keys.Delete) { e.SuppressKeyPress = true; await SelectedCommandAsync(engine.Remove); }
+            else if (e.KeyCode == Keys.Delete) { e.SuppressKeyPress = true; await ReconcileSelectionAsync(remove: true); }
             else if (e.KeyCode == Keys.F2) { e.SuppressKeyPress = true; await ScheduleAsync(); }
             else if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; Hide(); }
         };
@@ -199,7 +205,7 @@ internal sealed class MainForm : Form
         string nextCheck = checkPending ? "확인 중…" : nextCheckAt?.ToLocalTime().ToString("HH:mm:ss") ?? "준비 중";
         checkTiming.Text = $"마지막 확인: {lastCheck}  ·  다음 확인: {nextCheck} ({engine.Settings.PollIntervalMinutes}분 간격)";
         status.Text = (safeMode ? "[안전 모드] " : "") + engine.StatusText;
-        string signature = string.Join("\n", engine.Jobs.Select(j => $"{j.Id}|{j.FilePath}|{j.Status}|{j.ScheduledAt:O}|{j.LastError}"));
+        string signature = string.Join("\n", engine.Jobs.Select(j => $"{j.Id}|{j.FilePath}|{j.Status}|{j.CompletedManually}|{j.ScheduledAt:O}|{j.LastError}"));
         if (signature == queueSignature) return;
         queueSignature = signature;
         HashSet<Guid> selected = SelectedIds().ToHashSet();
@@ -207,11 +213,11 @@ internal sealed class MainForm : Form
         grid.Rows.Clear();
         foreach (JobItem job in engine.Jobs)
         {
-            int rowIndex = grid.Rows.Add(job.FileName, StatusName(job.Status), job.ScheduledAt?.ToLocalTime().ToString("MM-dd HH:mm") ?? "순서대로");
+            int rowIndex = grid.Rows.Add(job.FileName, StatusName(job), job.ScheduledAt?.ToLocalTime().ToString("MM-dd HH:mm") ?? "순서대로");
             DataGridViewRow row = grid.Rows[rowIndex];
             row.Tag = job.Id;
             row.Cells[0].ToolTipText = job.FilePath;
-            row.Cells[1].ToolTipText = $"{job.LastError ?? StatusName(job.Status)}\n로그 폴더: {LogDirectory(job)}\n두 번 클릭하면 작업 상세를 복사할 수 있습니다.";
+            row.Cells[1].ToolTipText = $"{job.LastError ?? StatusName(job)}\n로그 폴더: {LogDirectory(job)}\n두 번 클릭하면 작업 상세를 복사할 수 있습니다.";
             row.Cells[2].ToolTipText = job.ScheduledAt is { } at ? $"{at.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz} ({job.ScheduleTimeZone ?? TimeZoneInfo.Local.Id})" : "예약 없이 대기 순서에 따라 실행";
             row.Selected = selected.Contains(job.Id);
             row.Cells[1].Style.ForeColor = job.Status switch
@@ -242,7 +248,8 @@ internal sealed class MainForm : Form
         string text = string.Join(Environment.NewLine,
             $"파일: {job.FilePath}",
             $"작업 ID: {job.Id}",
-            $"상태: {StatusName(job.Status)} ({job.Status})",
+            $"상태: {StatusName(job)} ({job.Status})",
+            $"수동 완료: {(job.CompletedManually ? "예" : "아니오")}",
             $"마지막 오류: {job.LastError ?? "없음"}",
             $"실행 실패 이유: {run?.FailureReason ?? "없음"}",
             $"실행 ID: {run?.Id.ToString() ?? "없음"}",
@@ -264,6 +271,46 @@ internal sealed class MainForm : Form
         Guid[] ids = SelectedIds().ToArray();
         if (ids.Length == 0) return;
         await command(() => { foreach (Guid id in ids) action(id); });
+    }
+
+    private async Task ReconcileSelectionAsync(bool remove)
+    {
+        Guid[] ids = SelectedIds().ToArray();
+        var selected = engine.Jobs.Where(j => ids.Contains(j.Id))
+            .Select(j => (j.Id, RunId: j.Run?.Id, j.FileName, j.Status)).ToArray();
+        if (selected.Length == 0) return;
+        if (selected.Any(j => j.Status is JobStatus.Starting or JobStatus.Running or JobStatus.Saving))
+        { ShowError("시작·실행·저장 중인 작업은 수동 완료하거나 제거할 수 없습니다."); return; }
+        if (!remove && selected.Any(j => j.Status is not (JobStatus.NeedsAttention or JobStatus.Failed)))
+        { ShowError("확인 필요 또는 실패 작업만 수동 완료할 수 있습니다."); return; }
+        var manual = selected.Where(j => !remove || j.Status == JobStatus.NeedsAttention).ToArray();
+        if (manual.Length > 0)
+        {
+            string action = remove ? "확인 필요 작업 제거" : "수동 완료 처리";
+            string instruction = remove
+                ? "PowerSI 상태와 결과 저장 여부를 직접 확인한 뒤 목록에서 제거하세요."
+                : "시뮬레이션 완료와 결과 저장을 직접 확인한 작업만 수동 완료 처리하세요.";
+            using var confirm = new Form { Text = action, ClientSize = new Size(600, 330), Font = Font,
+                StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false };
+            confirm.Controls.Add(new TextBox { Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
+                ScrollBars = ScrollBars.Vertical, BackColor = Color.White,
+                Text = instruction + "\r\n\r\n앱은 목록만 변경하며 PowerSI 저장·종료를 실행하지 않습니다. 실행 기록과 로그는 보존합니다.\r\n대기열은 일시 중지되며, 다시 진행하려면 [시작]을 눌러야 합니다.\r\n\r\n선택한 작업:\r\n" +
+                    string.Join("\r\n", selected.Select(j => $"• {j.FileName} ({StatusName(j.Status)})")), AccessibleName = "수동 처리 확인 내용" });
+            var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 45, Padding = new Padding(6), FlowDirection = FlowDirection.RightToLeft };
+            var cancel = new Button { Text = "취소", DialogResult = DialogResult.Cancel, AutoSize = true };
+            buttons.Controls.Add(cancel);
+            buttons.Controls.Add(new Button { Text = remove ? "제거" : "수동 완료", DialogResult = DialogResult.OK, AutoSize = true });
+            confirm.Controls.Add(buttons);
+            confirm.AcceptButton = cancel;
+            confirm.CancelButton = cancel;
+            if (confirm.ShowDialog(this) != DialogResult.OK) return;
+        }
+        await command(() =>
+        {
+            foreach (var job in selected)
+                if (!remove || job.Status == JobStatus.NeedsAttention) engine.ResolveManually(job.Id, job.RunId, remove);
+                else engine.Remove(job.Id);
+        });
     }
 
     private async Task AddFilesAsync()
@@ -322,6 +369,8 @@ internal sealed class MainForm : Form
         "일시 중지는 다음 작업의 자동 시작을 멈춥니다. 현재 PowerSI 작업은 계속 실행됩니다. 앱 종료도 PowerSI를 강제로 종료하지 않습니다.\n\n" +
         "단축키: Ctrl+O 파일 추가 · Ctrl+C 전체 경로 복사 · F2 예약 · Delete 제거 · Esc 트레이로 숨기기",
         "PowerSI 연동 안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+    private static string StatusName(JobItem job) => job.Status == JobStatus.Completed && job.CompletedManually ? "완료 (수동)" : StatusName(job.Status);
 
     private static string StatusName(JobStatus value) => value switch
     {

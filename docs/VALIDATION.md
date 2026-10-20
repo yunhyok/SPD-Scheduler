@@ -29,6 +29,7 @@
 | 저장/정리 실패 | 오류와 실행 로그가 남고 다음 작업은 보류 |
 | 종료·재시작 | 앱만 종료해도 PowerSI 유지; 다시 열면 완료 확인·저장·정리 연결; 신규 시작은 일시정지 |
 | 자체 프로세스 조회 복구 | 종료된 자식 PID의 재사용과 조회 중 종료를 구분; 일시 조회 실패 후 현재 실행을 재확인하고 저장·종료 후 다음 작업 진행; 실제 접근 거부는 계속 대기 |
+| 수동 정리 | 확인 필요/실패 항목만 사용자 확인으로 수동 완료; 확인 필요 항목 제거 가능; 취소 시 변경 없음; PowerSI 명령 없음; SPD·로그 보존; 큐는 일시정지; 수동 완료 표시와 기록이 재시작 후 유지 |
 | 소유권 | PID 재사용·다른 PowerSI·살아 있는 solver·읽기 권한 오류에서 다른 프로세스를 제어하지 않음 |
 | 경로·UI | 한글·공백·괄호·대괄호·달러 기호 경로, 다중 드롭 순서, 긴 파일명 왕복/끝 정지, 숨김 시 애니메이션 중지 |
 | 트레이 | 더블클릭 복원, X 숨김, 두 번째 실행이 기존 창 복원, 트레이 종료 |
@@ -43,14 +44,14 @@
 
 ```powershell
 ./tools/Publish-Release.ps1 `
-  -InstallerPath ./artifacts/installer/SPD-Scheduler-Setup-0.1.6.exe `
+  -InstallerPath ./artifacts/installer/SPD-Scheduler-Setup-0.1.7.exe `
   -EvidencePath C:/Validation/SPD-Scheduler-evidence.json `
   -ValidateOnly
 ```
 
-같은 명령에서 `-ValidateOnly`를 제외하면 `v0.1.6` 정식 Release에 설치파일과 SHA-256을 게시합니다. 스크립트는 깨끗한 현재 HEAD, 빌드 manifest, 커밋·해시 일치를 검사합니다. `-EvidencePath`를 제공하면 증거와 설치파일의 일치 및 필수 통과 결과도 검사합니다. 실제 검증 후 소스나 설치파일을 바꾸면 다시 빌드·검증해야 합니다. 이 검사는 사람의 실측을 대체하지 않습니다.
+같은 명령에서 `-ValidateOnly`를 제외하면 `v0.1.7` 정식 Release에 설치파일과 SHA-256을 게시합니다. 스크립트는 깨끗한 현재 HEAD, 빌드 manifest, 커밋·해시 일치를 검사합니다. `-EvidencePath`를 제공하면 증거와 설치파일의 일치 및 필수 통과 결과도 검사합니다. 실제 검증 후 소스나 설치파일을 바꾸면 다시 빌드·검증해야 합니다. 이 검사는 사람의 실측을 대체하지 않습니다.
 
-사용자 요청에 따라 실측 전에도 설치·업데이트용 정식 Release를 게시할 수 있습니다. 이 경우 `-EvidencePath`를 생략하며, 릴리스 설명에 PowerSI 연동 검증이 아직 남아 있다고 자동 표시합니다. 미검증 증거를 통과로 변경하지 않습니다. 변경 설명은 `-NotesPath docs/releases/v0.1.6.md`로 지정할 수 있습니다.
+사용자 요청에 따라 실측 전에도 설치·업데이트용 정식 Release를 게시할 수 있습니다. 이 경우 `-EvidencePath`를 생략하며, 릴리스 설명에 PowerSI 연동 검증이 아직 남아 있다고 자동 표시합니다. 미검증 증거를 통과로 변경하지 않습니다. 변경 설명은 `-NotesPath docs/releases/v0.1.7.md`로 지정할 수 있습니다.
 
 ## 현 개발 환경에서의 검증 범위
 
