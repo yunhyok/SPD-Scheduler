@@ -153,7 +153,7 @@ internal static class PreprocessingEvidenceTests
         var runner = Runner(() => status);
         for (int index = 0; index < 2; index++)
         {
-            Check.Equal(RunStage.Running, (await Inspect(runner, job)).Stage, "Repeated stale Done must remain running after native start");
+            Check.Equal(RunStage.CompletionUnconfirmed, (await Inspect(runner, job)).Stage, "Repeated stale Done must hold for confirmation after native start");
             NoSave(job);
         }
         status = "Ready";
@@ -174,7 +174,7 @@ internal static class PreprocessingEvidenceTests
         Check.Equal(RunStage.Starting, (await Inspect(runner, job)).Stage, "An idle GUI before any start must not latch freshness");
         Output(job, Record(job, "Processing Circuits ...", 1));
         status = "Simulation Done.";
-        Check.Equal(RunStage.Running, (await Inspect(runner, job)).Stage, "An earlier idle GUI cannot make first Done fresh");
+        Check.Equal(RunStage.CompletionUnconfirmed, (await Inspect(runner, job)).Stage, "An earlier idle GUI cannot make first Done fresh");
         NoSave(job);
         status = "Processing synthetic layout";
         Check.Equal(RunStage.Running, (await Inspect(runner, job)).Stage, "Readable non-Simulation text after start counts as noncompleted UI");
@@ -194,7 +194,7 @@ internal static class PreprocessingEvidenceTests
             var runner = Runner(() => status);
             Check.Equal(RunStage.Running, (await Inspect(runner, job)).Stage, "Native start remains running while GUI is unreadable or empty");
             status = "Simulation Done.";
-            Check.Equal(RunStage.Running, (await Inspect(runner, job)).Stage, "An unreadable or empty GUI cannot make later Done fresh");
+            Check.Equal(RunStage.CompletionUnconfirmed, (await Inspect(runner, job)).Stage, "An unreadable or empty GUI cannot make later Done fresh");
             NoSave(job);
         }
     }
@@ -258,7 +258,7 @@ internal static class PreprocessingEvidenceTests
             var runner = Runner(() => status);
             await Inspect(runner, job);
             status = "Simulation Done.";
-            Check.Equal(preprocessing ? RunStage.Running : RunStage.Starting, (await Inspect(runner, job)).Stage,
+            Check.Equal(preprocessing ? RunStage.CompletionUnconfirmed : RunStage.Starting, (await Inspect(runner, job)).Stage,
                 "Changing only the case of Done must not authorize completion");
             NoSave(job);
             status = "Simulation running";

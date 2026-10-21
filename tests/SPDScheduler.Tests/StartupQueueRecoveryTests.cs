@@ -13,6 +13,7 @@ internal static class StartupQueueRecoveryTests
         yield return ("Other attention failures cannot be rearmed by startup recovery", OtherFailureRemainsPaused);
         yield return ("Manual resolution of a startup hold leaves queued work paused", ManualResolutionRemainsPaused);
         yield return ("Owned monitoring uses current root and child evidence instead of old external details", CurrentOwnedMonitoring);
+        yield return ("Unconfirmed completion permits manual recovery while holding subsequent work", CompletionConfirmationHold);
     }
 
     private static async Task SlowStartupRecovers()
@@ -189,6 +190,29 @@ internal static class StartupQueueRecoveryTests
         Check.That(details.Contains(rig.Clock.Now.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz")), "Incomplete details still show the new snapshot time");
         Check.That(!details.Contains("CURRENT_RUN_OBSERVATION") && !details.Contains("CURRENT_ROOT_EVIDENCE") && !details.Contains("STALE_EXTERNAL_EVIDENCE"),
             "An incomplete fresh snapshot cannot reuse old process evidence or inspection detail");
+    }
+
+    private static async Task CompletionConfirmationHold()
+    {
+        foreach (bool paused in new[] { false, true })
+        {
+            using var rig = new TestRig();
+            await rig.InitializeAsync();
+            var first = rig.Add("completion-transition-missed.spd");
+            rig.Add("after-completion-hold.spd");
+            rig.Engine.Start();
+            await rig.TickAsync();
+            if (paused) rig.Engine.Pause();
+            rig.Runner.Observation = new(RunStage.CompletionUnconfirmed, "Synthetic Done without observed transition", true);
+            await rig.TickAsync(2);
+            Check.Equal(JobStatus.NeedsAttention, first.Status, "Uncertain completion must remain manually recoverable");
+            Check.Equal(!paused, rig.Engine.IsArmed, "An unconfirmed completion preserves Start or explicit Pause intent");
+            Check.Equal(1, rig.Runner.Launched.Count, "Unconfirmed completion cannot start later work");
+            Check.Equal(0, rig.Runner.SaveRequests.Count, "Unconfirmed completion cannot request saving");
+            rig.Engine.ResolveManually(first.Id, first.Run!.Id, remove: false);
+            Check.That(first.CompletedManually && !rig.Engine.IsArmed, "Manual confirmation remains available and pauses the queue");
+            Check.Equal(0, rig.Runner.SaveRequests.Count, "Manual confirmation never sends save commands");
+        }
     }
 
     private static async Task CompleteRecoveredRun(TestRig rig, JobItem job)

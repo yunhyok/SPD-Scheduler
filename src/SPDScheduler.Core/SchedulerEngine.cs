@@ -337,6 +337,9 @@ public sealed class SchedulerEngine
                 if (_clock.GetUtcNow() - run.CreatedAt >= TimeSpan.FromMinutes(Settings.StartTimeoutMinutes))
                     Attention(job, "시작 확인 시간이 지났습니다. 현재 작업의 시작 상태를 계속 재확인하며 후속 작업은 대기합니다. 계산/라이선스/로그 상태를 직접 확인하세요. " + observation.Detail, pauseQueue: false);
                 break;
+            case RunStage.CompletionUnconfirmed:
+                Attention(job, observation.Detail, pauseQueue: false);
+                break;
             case RunStage.Running:
                 run.StartedObserved = true;
                 job.Status = JobStatus.Running;

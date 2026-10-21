@@ -172,6 +172,9 @@ public sealed class PowerSiRunner : IPowerSiRunner
             await WriteTokenAsync(run, "COMPLETION_OBSERVED", "completion.txt", cancellationToken).ConfigureAwait(false);
             return new(RunStage.ReadyToSave, "Fresh current-run completion evidence was observed.", true, activity);
         }
+        if (state.Started && !state.Completed && uiSignal == ProcessSignal.Completed)
+            return new(RunStage.CompletionUnconfirmed,
+                "완료 문구가 있지만 이번 실행의 미완료 → 완료 전이를 확인하지 못했습니다. 계속 재확인합니다. 실제 완료와 결과 저장을 직접 확인한 경우 수동 완료 처리할 수 있습니다.", true, activity);
         return new(state.Started ? RunStage.Running : RunStage.Starting,
             state.Started ? "현재 실행의 시작을 확인했습니다. 완료 신호를 기다리는 중입니다." :
             markers.Contains("BEGIN_RETURNED") ? "begin simulation returned; completion is not yet confirmed." : "Waiting for fresh simulation status or a matching workflow log rule.", true, activity);
