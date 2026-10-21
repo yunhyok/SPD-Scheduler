@@ -11,12 +11,14 @@ public sealed class SchedulerEngine
     private readonly HashSet<Guid> _resolved = [];
     private bool _initialized;
     private bool _persistenceFailed;
+    private ProcessSnapshot? _monitoringSnapshot;
+    private string? _ownedObservationDetail;
     public QueueDocument Document { get; private set; } = new();
     public IReadOnlyList<JobItem> Jobs => Document.Jobs;
     public AppSettings Settings => Document.Settings;
     public bool IsArmed { get; private set; }
     public string StatusText { get; private set; } = "일시정지 · 목록을 확인한 뒤 시작하세요.";
-    public string MonitoringDetails => _gate.Details;
+    public string MonitoringDetails => Jobs.Any(IsActive) ? OwnedMonitoringDetails() : _gate.Details;
     public DateTimeOffset? LastCheckedAt { get; private set; }
     public event EventHandler? Changed;
 
@@ -216,6 +218,8 @@ public sealed class SchedulerEngine
             if (!_initialized) await InitializeAsync(cancellationToken);
             if (_persistenceFailed) return;
             var snapshot = await _probe.CaptureAsync(cancellationToken);
+            _monitoringSnapshot = snapshot;
+            _ownedObservationDetail = null;
             LastCheckedAt = _clock.GetUtcNow();
             RefreshResolved(snapshot);
             var active = Jobs.Where(IsActive).ToArray();
@@ -254,6 +258,7 @@ public sealed class SchedulerEngine
             }
             // Repeat the process snapshot immediately before crossing the launch boundary.
             var finalSnapshot = await _probe.CaptureAsync(cancellationToken);
+            _monitoringSnapshot = finalSnapshot;
             LastCheckedAt = _clock.GetUtcNow();
             if (!IsArmed || !Document.Jobs.Contains(next) || next.Status != JobStatus.Queued ||
                 (next.ScheduledAt.HasValue && next.ScheduledAt > _clock.GetUtcNow())) return;
@@ -319,6 +324,7 @@ public sealed class SchedulerEngine
             return;
         }
         var observation = await _runner.InspectAsync(job, Settings, snapshot, cancellationToken);
+        _ownedObservationDetail = observation.Detail;
         if (!observation.ProcessAlive) _resolved.Add(job.Id);
         StatusText = observation.Detail;
         switch (observation.Stage)
@@ -329,7 +335,7 @@ public sealed class SchedulerEngine
                 break;
             case RunStage.Starting:
                 if (_clock.GetUtcNow() - run.CreatedAt >= TimeSpan.FromMinutes(Settings.StartTimeoutMinutes))
-                    Attention(job, "시작 확인 시간이 지났습니다. 계산/라이선스/로그 상태를 직접 확인하세요. " + observation.Detail);
+                    Attention(job, "시작 확인 시간이 지났습니다. 현재 작업의 시작 상태를 계속 재확인하며 후속 작업은 대기합니다. 계산/라이선스/로그 상태를 직접 확인하세요. " + observation.Detail, pauseQueue: false);
                 break;
             case RunStage.Running:
                 run.StartedObserved = true;
@@ -374,6 +380,7 @@ public sealed class SchedulerEngine
     private async Task CleanupAsync(JobItem job, ProcessSnapshot snapshot, CancellationToken cancellationToken)
     {
         var result = await _runner.CloseFailedRunAsync(job, snapshot, cancellationToken);
+        _ownedObservationDetail = result.Detail;
         if (result.State != CleanupState.Closed) _resolved.Remove(job.Id);
         StatusText = result.Detail;
         if (result.State == CleanupState.Closed)
@@ -398,13 +405,39 @@ public sealed class SchedulerEngine
         }
     }
 
-    private void Attention(JobItem job, string detail)
+    private void Attention(JobItem job, string detail, bool pauseQueue = true)
     {
         if (job.Status != JobStatus.NeedsAttention || job.LastError != detail) _store.AppendLog(detail, job.Id);
         job.Status = JobStatus.NeedsAttention;
         job.LastError = detail;
-        IsArmed = false;
+        if (pauseQueue) IsArmed = false;
         StatusText = "확인 필요 · " + detail;
+    }
+
+    private string OwnedMonitoringDetails()
+    {
+        var snapshot = _monitoringSnapshot;
+        var lines = new List<string>
+        {
+            snapshot is null ? "현재 실행 감시 · 아직 프로세스 관측 없음" :
+                $"현재 실행 감시 · 측정: {snapshot.CapturedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz}",
+            snapshot is null ? "" : snapshot.Complete ? "프로세스 관측 완료" : "관측 불완전: " + (snapshot.Error ?? "정보 부족"),
+            "현재 실행 관측: " + (_ownedObservationDetail ?? "이번 측정에서 실행 상태를 확인하지 못했습니다.")
+        };
+        foreach (var job in Jobs.Where(IsActive))
+        {
+            lines.Add($"실행 ID: {job.Run?.Id.ToString() ?? "없음"} · 작업 상태: {job.Status} · PID: {job.Run?.Process?.Pid.ToString() ?? "없음"}");
+            if (job.Run is not { } run) continue;
+            var identities = run.Children.ToHashSet();
+            if (run.Process is not null) identities.Add(run.Process);
+            foreach (var identity in identities.OrderBy(identity => identity.Pid))
+            {
+                var sample = snapshot?.Processes.FirstOrDefault(process => process.Identity == identity);
+                lines.Add(sample is null ? $"PID {identity.Pid} · 이번 관측에 없음{(snapshot?.Complete == true ? "" : " (종료 여부 확인 불가)")}" :
+                    $"PID {identity.Pid} · {Path.GetFileName(identity.ImagePath)} · 부모 PID {sample.ParentPid} · 상태 {sample.Signal} · 접근 {(sample.Accessible ? "가능" : "불가")}\r\n  근거: {sample.Evidence ?? "없음"}");
+            }
+        }
+        return string.Join("\r\n", lines);
     }
 
     private void Finish(JobItem job, bool success, string detail)

@@ -66,7 +66,7 @@ internal sealed class MainForm : Form
         tools.Controls.Add(MakeButton("설정", SettingsAsync));
         tools.Controls.Add(MakeButton("감시 상세", () =>
         {
-            using var detail = new Form { Text = "PowerSI 감시 상세 · 마지막 외부 유휴 관측", ClientSize = new Size(760, 440),
+            using var detail = new Form { Text = "PowerSI 감시 상세", ClientSize = new Size(760, 440),
                 StartPosition = FormStartPosition.CenterParent, Font = Font, MinimizeBox = false, ShowInTaskbar = false };
             detail.Controls.Add(new TextBox { Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
                 ScrollBars = ScrollBars.Both, WordWrap = false, Text = engine.MonitoringDetails,

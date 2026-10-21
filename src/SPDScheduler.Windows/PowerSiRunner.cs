@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -121,6 +122,9 @@ public sealed class PowerSiRunner : IPowerSiRunner
         if (!markers.Contains("OPENED")) return identitiesReadable
             ? new(RunStage.Starting, "Waiting for the new GUI to execute its Tcl script.", true, activity) : PendingIdentity();
 
+        string output = ReadTail(Path.Combine(run.DirectoryPath, "output.log"));
+        bool beginRequested = markers.Contains("BEGIN_REQUESTED");
+        if (beginRequested && HasPreprocessingProgress(output, run.CreatedAt)) state.Started = true;
         var status = await readStatus(run.Process, cancellationToken).ConfigureAwait(false);
         bool uiCompleted = false;
         var uiSignal = WindowsProcessProbe.ClassifyStatus(status);
@@ -128,9 +132,12 @@ public sealed class PowerSiRunner : IPowerSiRunner
         {
             var lines = status.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
             bool done = lines.Any(line => line.Equals("Simulation Done.", StringComparison.Ordinal));
-            bool simulation = lines.Any(line => line.StartsWith("Simulation", StringComparison.Ordinal) && !line.Equals("Simulation Done.", StringComparison.Ordinal));
-            if (simulation && !done && markers.Contains("BEGIN_REQUESTED")) { state.SawNonCompletedUi = true; state.Started = true; }
-            if (done && state.SawNonCompletedUi && markers.Contains("BEGIN_REQUESTED"))
+            bool containsDone = lines.Any(line => line.Equals("Simulation Done.", StringComparison.OrdinalIgnoreCase));
+            bool simulation = lines.Any(line => line.StartsWith("Simulation", StringComparison.OrdinalIgnoreCase) && !line.Equals("Simulation Done.", StringComparison.OrdinalIgnoreCase));
+            if (simulation && !containsDone && beginRequested) state.Started = true;
+            // Log start is not completion: require a readable transition away from any old Done pane.
+            if (beginRequested && state.Started && !containsDone && !string.IsNullOrWhiteSpace(status)) state.SawNonCompletedUi = true;
+            if (done && state.SawNonCompletedUi && beginRequested)
                 uiCompleted = true;
             if (uiSignal is ProcessSignal.Running or ProcessSignal.Suspended or ProcessSignal.LicenseWaiting or ProcessSignal.Error)
             {
@@ -147,7 +154,6 @@ public sealed class PowerSiRunner : IPowerSiRunner
             state.RuleChecked = true;
             run.Workflow = state.Rule?.Workflow;
         }
-        string output = ReadTail(Path.Combine(run.DirectoryPath, "output.log"));
         var log = new LogEvidence(state.RuleStarted, false, false, false, true);
         if (state.Rule != null && markers.Contains("BEGIN_REQUESTED"))
         {
@@ -167,6 +173,7 @@ public sealed class PowerSiRunner : IPowerSiRunner
             return new(RunStage.ReadyToSave, "Fresh current-run completion evidence was observed.", true, activity);
         }
         return new(state.Started ? RunStage.Running : RunStage.Starting,
+            state.Started ? "현재 실행의 시작을 확인했습니다. 완료 신호를 기다리는 중입니다." :
             markers.Contains("BEGIN_RETURNED") ? "begin simulation returned; completion is not yet confirmed." : "Waiting for fresh simulation status or a matching workflow log rule.", true, activity);
 
         RunObservation PendingIdentity()
@@ -286,6 +293,27 @@ public sealed class PowerSiRunner : IPowerSiRunner
         if (File.Exists(path) && await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false) == text) return;
         await File.WriteAllTextAsync(path + ".tmp", text, new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
         File.Move(path + ".tmp", path, true);
+    }
+
+    private static bool HasPreprocessingProgress(string output, DateTimeOffset createdAt)
+    {
+        // Only current-run native preprocessing records establish start; arbitrary output and headers do not.
+        long earliest = createdAt.UtcTicks - createdAt.UtcTicks % TimeSpan.TicksPerSecond;
+        foreach (string line in output.Split('\n', StringSplitOptions.TrimEntries))
+        {
+            if (line.Length < 24 || line[0] != '[' || !line.AsSpan(20, 3).SequenceEqual("]--") ||
+                !DateTime.TryParseExact(line.AsSpan(1, 19), "yyyy/MM/dd-HH:mm:ss", CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeLocal | DateTimeStyles.AdjustToUniversal, out var timestamp) || timestamp.Ticks < earliest)
+                continue;
+            if (line[23..].Trim() is "Arranging Layout ..." or "Arranging Circuits ..." or
+                "Processing Layout ..." or "Processing Circuits ..." or
+                "Arranging Layout - Shapes" or "Arranging Layout - Layers" or "Arranging Layout - Nodes" or
+                "Arranging Layout - Vias" or "Arranging Layout - Traces" or "Arranging Layout - Coupled Traces" or
+                "Processing On Plane Via Nodes" or "Processing On Plane Wire-bond Nodes" or "Setting Node Property" or
+                "Handling Trace-Patch Connections" or "Handling Overlapped Traces" or "Handling Pads" or
+                "Handling Trace-Via and Trace-Pad Connections") return true;
+        }
+        return false;
     }
 
     private static string ReadTail(string path)
