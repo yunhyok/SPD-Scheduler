@@ -4,7 +4,7 @@ param([string]$DotnetPath)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$version = '0.1.8'
+$version = '0.2.0'
 if (-not $DotnetPath) {
     $bundledDotnet = Join-Path $repoRoot '.tools/dotnet/dotnet.exe'
     $DotnetPath = if (Test-Path -LiteralPath $bundledDotnet) { $bundledDotnet } else { 'dotnet' }

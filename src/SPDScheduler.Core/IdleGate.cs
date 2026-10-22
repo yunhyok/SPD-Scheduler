@@ -9,7 +9,7 @@ public sealed class IdleGate
     private readonly Dictionary<ProcessIdentity, DateTimeOffset> _completedRoots = [];
     private readonly HashSet<ProcessIdentity> _approvedBbs = [];
     private ProcessSnapshot? _qualifiedBaseline, _qualifiedCurrent;
-    public string Details { get; private set; } = "자동 진행 중 외부 PowerSI를 관측하면 감시 정보가 표시됩니다.";
+    public string Details { get; private set; } = "자동 진행 중 외부 PowerSI/PowerDC를 관측하면 감시 정보가 표시됩니다.";
 
     public void Reset() { ResetIdle(); _runningRoots.Clear(); _completedRoots.Clear(); }
 
@@ -35,7 +35,7 @@ public sealed class IdleGate
             return new(false, false, "실행 직전 프로세스 또는 관측 정보가 변경되었습니다.");
         }
         var allowedPostProcessing = AllowedPostProcessing(snapshot.Processes, settings);
-        var children = snapshot.Processes.Where(p => !IsPowerSi(p.Identity) && !allowedPostProcessing.Contains(p.Identity)).ToArray();
+        var children = snapshot.Processes.Where(p => !IsSimulationGui(p.Identity) && !allowedPostProcessing.Contains(p.Identity)).ToArray();
         var cpuDelta = children.Sum(p => p.CpuSeconds - prior[p.Identity].CpuSeconds);
         // Ignore at most two Windows CPU counter ticks per process during a subsecond recheck.
         var cpuAllowance = seconds < 1 ? children.Length * 0.032 : 0;
@@ -69,24 +69,24 @@ public sealed class IdleGate
         {
             Reset();
             Details += "\r\n관측 불완전: " + snapshot.Error;
-            return new(false, false, snapshot.Error ?? "PowerSI 프로세스 정보를 확인할 수 없습니다.");
+            return new(false, false, snapshot.Error ?? "PowerSI/PowerDC 프로세스 정보를 확인할 수 없습니다.");
         }
         var processes = snapshot.Processes.Where(p => excluded is null || !excluded.Contains(p.Identity)).ToArray();
         if (processes.Length == 0)
         {
             Reset(); _approvedBbs.Clear(); _qualifiedBaseline = snapshot; _qualifiedCurrent = snapshot;
-            return new(true, false, "다른 PowerSI 작업이 없습니다.");
+            return new(true, false, "다른 PowerSI/PowerDC 작업이 없습니다.");
         }
         var current = snapshot with { Processes = processes };
         if (processes.Any(p => !p.Accessible || p.OtherIoBytes > p.IoBytes))
         {
             Reset();
-            return new(false, false, "PowerSI 접근 권한 또는 관측 정보가 부족합니다.");
+            return new(false, false, "PowerSI/PowerDC 접근 권한 또는 관측 정보가 부족합니다.");
         }
         var allowedPostProcessing = AllowedPostProcessing(processes, settings);
         var parallel = allowedPostProcessing.Count > 0 ? "BbsCon 후처리 병행 허용 · " : "";
         Details += $"\r\nBbsCon 후처리 병행: {(settings.AllowBbsPostProcessing ? "허용" : "차단")} · 판정 제외 프로세스: {allowedPostProcessing.Count}개";
-        var roots = processes.Where(p => IsPowerSi(p.Identity)).ToArray();
+        var roots = processes.Where(p => IsSimulationGui(p.Identity)).ToArray();
         var rootIdentities = roots.Select(p => p.Identity).ToHashSet();
         _runningRoots.RemoveWhere(identity => !rootIdentities.Contains(identity));
         foreach (var identity in _completedRoots.Keys.Where(identity => !rootIdentities.Contains(identity)).ToArray()) _completedRoots.Remove(identity);
@@ -103,14 +103,14 @@ public sealed class IdleGate
         if (busy is not null)
         {
             ResetIdle();
-            return new(false, false, busy.Evidence ?? $"PowerSI {busy.Identity.Pid}: {busy.Signal}");
+            return new(false, false, busy.Evidence ?? $"PowerSI/PowerDC {busy.Identity.Pid}: {busy.Signal}");
         }
         // A completion label can precede child-process flushing; still require sustained quiet.
         if (_previous is null || !_previous.Processes.Select(p => p.Identity).ToHashSet().SetEquals(processes.Select(p => p.Identity)))
         {
             ResetIdle();
             _previous = current;
-            return new(false, false, parallel.Length > 0 ? parallel + "다음 작업 시작 부하를 관측합니다." : "PowerSI 유휴 상태를 관측합니다.");
+            return new(false, false, parallel.Length > 0 ? parallel + "다음 작업 시작 부하를 관측합니다." : "PowerSI/PowerDC 유휴 상태를 관측합니다.");
         }
         var seconds = (current.CapturedAt - _previous.CapturedAt).TotalSeconds;
         if (seconds <= 0 || seconds > settings.PollIntervalMinutes * 60 + _previous.ObservationDuration.TotalSeconds + confirmationDelay.TotalSeconds + 10)
@@ -130,7 +130,7 @@ public sealed class IdleGate
         var observedIo = processes.Sum(p => (double)(p.IoBytes - prior[p.Identity].IoBytes)) / seconds;
         var observedOtherIo = processes.Sum(p => (double)(p.OtherIoBytes - prior[p.Identity].OtherIoBytes)) / seconds;
         var cpu = decisionProcesses.Sum(p => p.CpuSeconds - prior[p.Identity].CpuSeconds) / seconds * 100;
-        bool CompletedGuiIo(ProcessSample p) => IsPowerSi(p.Identity) && p.Signal == ProcessSignal.Completed &&
+        bool CompletedGuiIo(ProcessSample p) => IsSimulationGui(p.Identity) && p.Signal == ProcessSignal.Completed &&
             prior[p.Identity].Signal == ProcessSignal.Completed;
         var io = decisionProcesses.Where(p => !CompletedGuiIo(p))
             .Sum(p => (double)(ReadWriteBytes(p) - ReadWriteBytes(prior[p.Identity]))) / seconds;
@@ -169,7 +169,7 @@ public sealed class IdleGate
             _lowSince = null;
             _memory.Clear();
             _previous = current;
-            return new(false, false, $"{parallel}PowerSI 리소스 대기 · 판정 CPU {cpu / processorCount:F2}% (전체) · 기준 초과: {string.Join(", ", blockedBy)}");
+            return new(false, false, $"{parallel}PowerSI/PowerDC 리소스 대기 · 판정 CPU {cpu / processorCount:F2}% (전체) · 기준 초과: {string.Join(", ", blockedBy)}");
         }
         _lowSince ??= _previous.CapturedAt;
         var measuredBaseline = _previous;
@@ -184,6 +184,9 @@ public sealed class IdleGate
             ? new(true, true, parallel.Length > 0 ? $"{parallel}판정 대상 {required}초 연속 저부하" : completed ? $"완료 전이 확인 · {required}초 연속 저부하 (외부 유휴 추정)" : $"유휴 추정 · {settings.IdleSeconds}초 연속 저부하 (오판 가능)")
             : new(false, false, $"{parallel}판정 대상 관측 {elapsed:F0}/{settings.IdleSeconds}초 · CPU {cpu / processorCount:F2}% (전체)");
     }
+
+    private static bool IsSimulationGui(ProcessIdentity identity) => IsPowerSi(identity) ||
+        Path.GetFileNameWithoutExtension(identity.ImagePath).Equals("powerdc", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsPowerSi(ProcessIdentity identity) =>
         Path.GetFileNameWithoutExtension(identity.ImagePath).Equals("powersi", StringComparison.OrdinalIgnoreCase) ||

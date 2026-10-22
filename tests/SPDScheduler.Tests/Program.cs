@@ -4,7 +4,7 @@ var tests = SchedulerTests.All().Concat(IdleGateTests.All()).Concat(ScriptTests.
     .Concat(RunnerRecoveryTests.All()).Concat(LogEvidenceTests.All()).Concat(QueueValidationTests.All()).Concat(WorkerTests.All())
     .Concat(ProcessTreeTests.All()).Concat(SettingsMigrationTests.All()).Concat(StatusReaderTests.All()).Concat(BbsPolicyTests.All())
     .Concat(PathConfigurationTests.All()).Concat(ProcessIdentityTests.All()).Concat(ManualResolutionTests.All())
-    .Concat(StartupQueueRecoveryTests.All()).Concat(PreprocessingEvidenceTests.All()).ToArray();
+    .Concat(StartupQueueRecoveryTests.All()).Concat(PreprocessingEvidenceTests.All()).Concat(PowerDcQueueTests.All()).Concat(PowerDcWindowsTests.All()).ToArray();
 var failures = 0;
 foreach (var (name, test) in tests)
 {

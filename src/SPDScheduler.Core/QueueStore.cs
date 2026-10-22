@@ -30,9 +30,9 @@ public sealed class QueueStore
             using var json = JsonDocument.Parse(stream);
             var document = json.RootElement.Deserialize<QueueDocument>(JsonOptions)
                 ?? throw new InvalidDataException("목록 파일이 비어 있습니다.");
-            if (document.SchemaVersion != 1 || document.Jobs is null || document.Settings is null)
+            if (document.SchemaVersion is not (1 or 2) || document.Jobs is null || document.Settings is null)
                 throw new InvalidDataException("지원하지 않는 목록 형식입니다.");
-            if (document.Jobs.Any(j => j is null || j.Id == Guid.Empty || !Enum.IsDefined(j.Status) ||
+            if (document.Jobs.Any(j => j is null || j.Id == Guid.Empty || !Enum.IsDefined(j.Status) || !Enum.IsDefined(j.Tool) ||
                     !Path.IsPathFullyQualified(j.FilePath) || !Path.GetExtension(j.FilePath).Equals(".spd", StringComparison.OrdinalIgnoreCase)) ||
                 document.Jobs.Select(j => j.Id).Distinct().Count() != document.Jobs.Count)
                 throw new InvalidDataException("목록에 유효하지 않은 작업이 있습니다.");
@@ -65,6 +65,7 @@ public sealed class QueueStore
                 document.Settings.IdleMemoryMiB = 128;
                 if (document.Settings.IdleSeconds == 180) document.Settings.IdleSeconds = 60;
             }
+            document.SchemaVersion = 2;
             return document;
         }
         catch (Exception ex) when (ex is JsonException or ArgumentException or NotSupportedException)
@@ -79,6 +80,8 @@ public sealed class QueueStore
 
     public void Save(QueueDocument document)
     {
+        // Older schedulers must reject the document rather than launch a PowerDC job as PowerSI.
+        document.SchemaVersion = 2;
         var temporary = QueuePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {

@@ -73,9 +73,9 @@ internal static class Program
 
 internal sealed class SafeModeRunner : IPowerSiRunner
 {
-    public void ValidateConfiguration(AppSettings settings) { }
+    public void ValidateConfiguration(AppSettings settings, SimulationTool tool = SimulationTool.PowerSI) { }
     public Task<ProcessIdentity> LaunchAsync(JobItem job, AppSettings settings, CancellationToken cancellationToken) =>
-        Task.FromException<ProcessIdentity>(new InvalidOperationException("안전 모드에서는 PowerSI를 실행하지 않습니다."));
+        Task.FromException<ProcessIdentity>(new InvalidOperationException("안전 모드에서는 PowerSI/PowerDC를 실행하지 않습니다."));
     public Task<RunObservation> InspectAsync(JobItem job, AppSettings settings, ProcessSnapshot snapshot, CancellationToken cancellationToken) =>
         Task.FromResult(new RunObservation(RunStage.Unknown, "안전 모드: 실행 상태를 확인하지 않습니다.", false));
     public Task RequestSaveAndExitAsync(JobItem job, CancellationToken cancellationToken) => Task.CompletedTask;
@@ -86,5 +86,5 @@ internal sealed class SafeModeRunner : IPowerSiRunner
 internal sealed class SafeModeProbe : IProcessProbe
 {
     public Task<ProcessSnapshot> CaptureAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(new ProcessSnapshot(DateTimeOffset.Now, [], false, "안전 모드: PowerSI 실행 차단"));
+        Task.FromResult(new ProcessSnapshot(DateTimeOffset.Now, [], false, "안전 모드: PowerSI/PowerDC 실행 차단"));
 }

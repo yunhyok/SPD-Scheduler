@@ -43,6 +43,8 @@ internal sealed class FakeProbe(TestClock clock) : IProcessProbe
 internal sealed class FakeRunner(FakeProbe probe, TestClock clock) : IPowerSiRunner
 {
     public List<Guid> Launched { get; } = [];
+    public List<SimulationTool> LaunchedTools { get; } = [];
+    public List<SimulationTool> ValidatedTools { get; } = [];
     public List<Guid> SaveRequests { get; } = [];
     public List<ProcessIdentity> CleanupIdentities { get; } = [];
     public RunObservation Observation { get; set; } = new(RunStage.Running, "Synthetic running evidence", true, true);
@@ -51,13 +53,20 @@ internal sealed class FakeRunner(FakeProbe probe, TestClock clock) : IPowerSiRun
     public Action<JobItem>? BeforeLaunch { get; set; }
     public Action<JobItem>? BeforeSave { get; set; }
     public Action<AppSettings>? BeforeValidateConfiguration { get; set; }
+    public Action<AppSettings, SimulationTool>? BeforeValidateToolConfiguration { get; set; }
 
-    public void ValidateConfiguration(AppSettings settings) => BeforeValidateConfiguration?.Invoke(settings);
+    public void ValidateConfiguration(AppSettings settings, SimulationTool tool = SimulationTool.PowerSI)
+    {
+        ValidatedTools.Add(tool);
+        BeforeValidateConfiguration?.Invoke(settings);
+        BeforeValidateToolConfiguration?.Invoke(settings, tool);
+    }
 
     public Task<ProcessIdentity> LaunchAsync(JobItem job, AppSettings settings, CancellationToken cancellationToken)
     {
         BeforeLaunch?.Invoke(job);
         Launched.Add(job.Id);
+        LaunchedTools.Add(job.Tool);
         var identity = new ProcessIdentity(10_000 + Launched.Count, clock.Now,
             Path.Combine(Path.GetTempPath(), "SPDScheduler.Tests", "SyntheticPowerSI.exe"));
         probe.Processes.Add(new ProcessSample(identity, 0, 0, 100 * 1024 * 1024, 0));

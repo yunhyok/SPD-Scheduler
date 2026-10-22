@@ -15,6 +15,8 @@ public static class SettingsValidator
         if (settings.CompletionRules is null) throw new ArgumentException("완료 규칙 목록이 없습니다.");
         foreach (var rule in settings.CompletionRules)
         {
+            if (rule is not null && !Enum.IsDefined(rule.Tool))
+                throw new ArgumentException("완료 규칙의 시뮬레이션 도구가 유효하지 않습니다.");
             if (rule is null || string.IsNullOrWhiteSpace(rule.Workflow) || string.IsNullOrWhiteSpace(rule.SpdPattern) || string.IsNullOrWhiteSpace(rule.StartedPattern) ||
                 string.IsNullOrWhiteSpace(rule.CompletedPattern))
                 throw new ArgumentException("완료 규칙에는 모드 이름, SPD 식별식, 시작/완료 표현식이 필요합니다.");

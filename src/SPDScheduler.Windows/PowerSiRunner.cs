@@ -38,14 +38,19 @@ public sealed class PowerSiRunner : IPowerSiRunner
     private sealed record Freshness(Guid RunId, bool SawNonCompletedUi, bool Started, bool RuleStarted);
     public sealed record LogEvidence(bool Started, bool Completed, bool NewerStart, bool Blocked, bool Reliable);
 
-    public void ValidateConfiguration(AppSettings settings) =>
-        settings.PowerSiPath = PowerSiDiscovery.ResolveExecutablePath(settings.PowerSiPath);
+    public void ValidateConfiguration(AppSettings settings, SimulationTool tool = SimulationTool.PowerSI)
+    {
+        if (!Enum.IsDefined(tool)) throw new ArgumentException("지원하지 않는 실행 프로그램입니다.", nameof(tool));
+        if (tool == SimulationTool.PowerDC)
+            settings.PowerDcPath = PowerSiDiscovery.ResolveExecutablePath(settings.PowerDcPath, tool);
+        else settings.PowerSiPath = PowerSiDiscovery.ResolveExecutablePath(settings.PowerSiPath, tool);
+    }
 
     public async Task<ProcessIdentity> LaunchAsync(JobItem job, AppSettings settings, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        ValidateConfiguration(settings);
-        string executable = settings.PowerSiPath;
+        ValidateConfiguration(settings, job.Tool);
+        string executable = job.Tool == SimulationTool.PowerDC ? settings.PowerDcPath : settings.PowerSiPath;
         string spd = Path.GetFullPath(job.FilePath);
         if (!File.Exists(spd) || !Path.GetExtension(spd).Equals(".spd", StringComparison.OrdinalIgnoreCase)) throw new IOException("SPD file is unavailable.");
         var run = job.Run ??= new RunRecord();
@@ -57,7 +62,7 @@ public sealed class PowerSiRunner : IPowerSiRunner
         if (Directory.EnumerateFileSystemEntries(run.DirectoryPath).Any()) throw new IOException("The run folder must be new and empty.");
         run.CreatedAt = DateTimeOffset.UtcNow;
         var script = Path.Combine(run.DirectoryPath, "run.tcl");
-        await File.WriteAllTextAsync(script, CreateScript(run.Id, spd, run.DirectoryPath), new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
+        await File.WriteAllTextAsync(script, CreateScript(run.Id, spd, run.DirectoryPath, job.Tool), new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
         var start = new ProcessStartInfo(executable)
         {
             WorkingDirectory = Path.GetDirectoryName(spd)!, UseShellExecute = false, CreateNoWindow = false
@@ -68,13 +73,13 @@ public sealed class PowerSiRunner : IPowerSiRunner
         // Native per-run log files survive scheduler exit without a redirected pipe dependency.
         using var process = new Process { StartInfo = start };
         cancellationToken.ThrowIfCancellationRequested();
-        try { if (!process.Start()) throw new IOException("PowerSI did not start."); }
+        try { if (!process.Start()) throw new IOException($"{job.Tool} did not start."); }
         catch { process.Dispose(); throw; }
         ProcessIdentity identity;
         try { identity = new(process.Id, new DateTimeOffset(process.StartTime.ToUniversalTime()), executable); }
         catch
         {
-            run.FailureReason = "PowerSI was launched but its identity could not be established; manual inspection required.";
+            run.FailureReason = $"{job.Tool} was launched but its identity could not be established; manual inspection required.";
             throw;
         }
         run.Process = identity;
@@ -103,7 +108,7 @@ public sealed class PowerSiRunner : IPowerSiRunner
             state.Counters[sample.Identity.Pid] = (sample.CpuSeconds, sample.IoBytes);
         }
         var markers = ReadMarkers(run);
-        if (markers.Contains("EXIT_FAILED")) return new(RunStage.Unknown, "Saving succeeded but PowerSI rejected exit; inspect this run's error.txt and GUI.", alive, activity);
+        if (markers.Contains("EXIT_FAILED")) return new(RunStage.Unknown, "Saving succeeded but The simulation application rejected exit; inspect this run's error.txt and GUI.", alive, activity);
         if (markers.Contains("SAVED"))
         {
             if (!identitiesReadable) return PendingIdentity();
@@ -111,7 +116,7 @@ public sealed class PowerSiRunner : IPowerSiRunner
             return new(alive ? RunStage.Saving : RunStage.Succeeded,
                 alive ? "Save is confirmed; waiting for this run and its solver processes to exit." : "Save confirmed and owned processes exited.", alive, activity);
         }
-        if (markers.Contains("SAVE_FAILED")) return new(RunStage.SaveFailed, "PowerSI rejected saving. The process is preserved.", alive, activity);
+        if (markers.Contains("SAVE_FAILED")) return new(RunStage.SaveFailed, "The simulation application rejected saving. The process is preserved.", alive, activity);
         if (markers.Contains("START_REJECTED"))
             return new(state.Started || run.StartedObserved ? RunStage.RuntimeFailed : RunStage.StartFailed,
                 "The current-run Tcl command reported an error; see this run's error.txt.", alive, activity);
@@ -124,7 +129,7 @@ public sealed class PowerSiRunner : IPowerSiRunner
 
         string output = ReadTail(Path.Combine(run.DirectoryPath, "output.log"));
         bool beginRequested = markers.Contains("BEGIN_REQUESTED");
-        if (beginRequested && HasPreprocessingProgress(output, run.CreatedAt)) state.Started = true;
+        if (beginRequested && HasPreprocessingProgress(output, run.CreatedAt, job.Tool)) state.Started = true;
         var status = await readStatus(run.Process, cancellationToken).ConfigureAwait(false);
         bool uiCompleted = false;
         var uiSignal = WindowsProcessProbe.ClassifyStatus(status);
@@ -144,13 +149,13 @@ public sealed class PowerSiRunner : IPowerSiRunner
                 run.StartedObserved |= state.Started;
                 await PersistEvidenceAsync(run, state, cancellationToken).ConfigureAwait(false);
                 if (!identitiesReadable) return PendingIdentity();
-                return new(RunStage.Running, "PowerSI reports an active or blocked simulation; no save or next job will start.", true, activity);
+                return new(RunStage.Running, "The simulation application reports an active or blocked simulation; no save or next job will start.", true, activity);
             }
         }
 
         if (!state.RuleChecked)
         {
-            state.Rule = await FindRuleAsync(job.FilePath, settings.CompletionRules, cancellationToken).ConfigureAwait(false);
+            state.Rule = await FindRuleAsync(job.FilePath, settings.CompletionRules.Where(rule => rule.Tool == job.Tool), cancellationToken).ConfigureAwait(false);
             state.RuleChecked = true;
             run.Workflow = state.Rule?.Workflow;
         }
@@ -192,18 +197,18 @@ public sealed class PowerSiRunner : IPowerSiRunner
         var run = job.Run ?? throw new InvalidOperationException("Run record is missing.");
         if (TokenMatches(run, "SAVE_EXIT", "control.txt")) { run.SaveRequested = true; return; }
         if (!TokenMatches(run, "COMPLETION_OBSERVED", "completion.txt")) throw new InvalidOperationException("Fresh completion evidence is required before saving and exiting.");
-        if (run.Process == null) throw new InvalidOperationException("Owned PowerSI identity is missing.");
+        if (run.Process == null) throw new InvalidOperationException("Owned simulation process identity is missing.");
         var identity = identityState(run.Process);
         // Without a delivered control token, the next inspection must observe completion again.
         if (!identity.Readable) return;
-        if (!identity.Alive) throw new InvalidOperationException("Owned PowerSI identity changed.");
+        if (!identity.Alive) throw new InvalidOperationException("Owned simulation process identity changed.");
         if (!evidence.TryGetValue(run.Id, out var state) || !state.Completed || state.CompletionAt == null ||
             DateTimeOffset.UtcNow - state.CompletionAt > TimeSpan.FromSeconds(10)) throw new InvalidOperationException("Completion evidence must be observed again before saving.");
         var status = await readStatus(run.Process, cancellationToken).ConfigureAwait(false);
         if (WindowsProcessProbe.ClassifyStatus(status) is ProcessSignal.Running or ProcessSignal.Suspended or ProcessSignal.LicenseWaiting or ProcessSignal.Error)
         {
             InvalidateCompletion(run, state);
-            throw new InvalidOperationException("PowerSI no longer reports completion; its process is preserved.");
+            throw new InvalidOperationException("The simulation application no longer reports completion; its process is preserved.");
         }
         if (state.CompletedViaUi && (status == null || !status.Split('\n').Any(line => line.Trim().Equals("Simulation Done.", StringComparison.Ordinal))))
         {
@@ -236,12 +241,12 @@ public sealed class PowerSiRunner : IPowerSiRunner
             return new(CleanupState.Unsafe, "An owned solver child is alive or unreadable; cleanup is blocked.");
         if (!alive && snapshot.Complete && identities.All(identity => identity.Readable)) return new(CleanupState.Closed, "All owned processes have exited.");
         if (!ReadMarkers(run).Contains("START_REJECTED") || run.StartedObserved || run.SaveRequested)
-            return new(CleanupState.Unsafe, "No confirmed rejected start; the PowerSI process is preserved.");
+            return new(CleanupState.Unsafe, "No confirmed rejected start; the simulation process is preserved.");
         if (snapshot.Processes.Any(p => run.Children.Any(child => WindowsProcessProbe.SameIdentity(child, p.Identity))))
             return new(CleanupState.Unsafe, "An owned solver child remains; cleanup waits for manual confirmation.");
         if (!snapshot.Complete || run.Process == null || !identityState(run.Process).Alive)
             return new(CleanupState.Unsafe, "Process ownership cannot be confirmed.");
-        if (ReadMarkers(run).Contains("CLEANUP_FAILED")) return new(CleanupState.Unsafe, "PowerSI rejected no-save cleanup; inspect its GUI.");
+        if (ReadMarkers(run).Contains("CLEANUP_FAILED")) return new(CleanupState.Unsafe, "The simulation application rejected no-save cleanup; inspect its GUI.");
         await WriteTokenAsync(run, "ABORT_NO_SAVE", "control.txt", cancellationToken).ConfigureAwait(false);
         run.CleanupRequestedAt ??= DateTimeOffset.UtcNow;
         return new(CleanupState.Pending, "Requested no-save exit of this run only; waiting for process exit.");
@@ -298,16 +303,19 @@ public sealed class PowerSiRunner : IPowerSiRunner
         File.Move(path + ".tmp", path, true);
     }
 
-    private static bool HasPreprocessingProgress(string output, DateTimeOffset createdAt)
+    private static bool HasPreprocessingProgress(string output, DateTimeOffset createdAt, SimulationTool tool)
     {
         // Only current-run native preprocessing records establish start; arbitrary output and headers do not.
         long earliest = createdAt.UtcTicks - createdAt.UtcTicks % TimeSpan.TicksPerSecond;
         foreach (string line in output.Split('\n', StringSplitOptions.TrimEntries))
         {
+            // PowerDC also writes unprefixed progress to the new, run-specific output log.
+            if (tool == SimulationTool.PowerDC && IsPowerDcProgress(line)) return true;
             if (line.Length < 24 || line[0] != '[' || !line.AsSpan(20, 3).SequenceEqual("]--") ||
                 !DateTime.TryParseExact(line.AsSpan(1, 19), "yyyy/MM/dd-HH:mm:ss", CultureInfo.InvariantCulture,
                     DateTimeStyles.AssumeLocal | DateTimeStyles.AdjustToUniversal, out var timestamp) || timestamp.Ticks < earliest)
                 continue;
+            if (tool == SimulationTool.PowerDC && IsPowerDcProgress(line[23..].Trim())) return true;
             if (line[23..].Trim() is "Arranging Layout ..." or "Arranging Circuits ..." or
                 "Processing Layout ..." or "Processing Circuits ..." or
                 "Arranging Layout - Shapes" or "Arranging Layout - Layers" or "Arranging Layout - Nodes" or
@@ -318,6 +326,10 @@ public sealed class PowerSiRunner : IPowerSiRunner
         }
         return false;
     }
+
+    private static bool IsPowerDcProgress(string line) => line is
+        "Arranging data for IR drop analysis ..." or "Geometry processing ..." or
+        "Finding overlapped vias ..." or "Generating FEM mesh ...";
 
     private static string ReadTail(string path)
     {
@@ -427,8 +439,9 @@ public sealed class PowerSiRunner : IPowerSiRunner
         File.Move(temporary, path, true);
     }
 
-    public static string CreateScript(Guid runId, string spdPath, string runDirectory)
+    public static string CreateScript(Guid runId, string spdPath, string runDirectory, SimulationTool tool = SimulationTool.PowerSI)
     {
+        if (!Enum.IsDefined(tool)) throw new ArgumentException("지원하지 않는 실행 프로그램입니다.", nameof(tool));
         static string Encoded(string value) => Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
         return $$$"""
             set ::scheduler_id { {{{runId:N}}} }
@@ -461,6 +474,17 @@ public sealed class PowerSiRunner : IPowerSiRunner
                         scheduler_mark SAVE_FAILED
                         return
                     }
+                    {{{(tool == SimulationTool.PowerDC ? """
+                    set result [file join $::scheduler_dir powerdc-results.xml]
+                    if {[catch {
+                        sigrity::save pdcResults $result {!}
+                        if {![file exists $result] || [file size $result] == 0} {error "PowerDC result file was not saved."}
+                    } message]} {
+                        scheduler_error $message
+                        scheduler_mark SAVE_FAILED
+                        return
+                    }
+                    """ : "")}}}
                     scheduler_mark SAVED
                     if {[catch {sigrity::exit -noSave {!}} message]} {scheduler_error $message; scheduler_mark EXIT_FAILED}
                     return

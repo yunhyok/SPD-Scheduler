@@ -21,7 +21,7 @@ public static class WindowsTextWorker
                 !long.TryParse(args[2], out long ticks)) return 2;
             var identity = new ProcessIdentity(pid, new DateTimeOffset(ticks, TimeSpan.Zero),
                 Encoding.UTF8.GetString(Convert.FromBase64String(args[3])));
-            if (!WindowsProcessProbe.IsPowerSi(identity.ImagePath) || !WindowsProcessProbe.IdentityMatches(identity)) return 3;
+            if (!WindowsProcessProbe.IsSimulationGui(identity.ImagePath) || !WindowsProcessProbe.IdentityMatches(identity)) return 3;
             using var process = Process.GetProcessById(pid);
             IntPtr window = process.MainWindowHandle;
             if (window == IntPtr.Zero) return 4;
@@ -129,7 +129,7 @@ public static class WindowsTextWorker
         deadline.CancelAfter(TimeSpan.FromSeconds(3));
         try
         {
-            if (!worker.Start()) throw new IOException("PowerSI status reader could not start.");
+            if (!worker.Start()) throw new IOException("Simulation status reader could not start.");
             var error = worker.StandardError.BaseStream.CopyToAsync(Stream.Null, deadline.Token);
             var output = new StringBuilder();
             var buffer = new char[2048];
@@ -142,11 +142,11 @@ public static class WindowsTextWorker
             await worker.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
             await error.ConfigureAwait(false);
             if (worker.ExitCode is >= 2 and <= 6) return null;
-            if (worker.ExitCode != 0) throw new IOException($"PowerSI status reader is unavailable (exit {worker.ExitCode}). Reinstall the complete SPD Scheduler package.");
+            if (worker.ExitCode != 0) throw new IOException($"Simulation status reader is unavailable (exit {worker.ExitCode}). Reinstall the complete SPD Scheduler package.");
             return Encoding.UTF8.GetString(Convert.FromBase64String(output.ToString()));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return null; }
-        catch (System.ComponentModel.Win32Exception exception) { throw new IOException("PowerSI status reader could not start. Reinstall the complete SPD Scheduler package.", exception); }
+        catch (System.ComponentModel.Win32Exception exception) { throw new IOException("Simulation status reader could not start. Reinstall the complete SPD Scheduler package.", exception); }
         catch (FormatException) { return null; }
         finally
         {
@@ -158,7 +158,7 @@ public static class WindowsTextWorker
     internal static string ResolveExecutable(string baseDirectory)
     {
         string executable = Path.Combine(baseDirectory, "SPDScheduler.StatusReader.exe");
-        if (!File.Exists(executable)) throw new FileNotFoundException("PowerSI status reader is missing. Reinstall the complete SPD Scheduler package.", executable);
+        if (!File.Exists(executable)) throw new FileNotFoundException("Simulation status reader is missing. Reinstall the complete SPD Scheduler package.", executable);
         return executable;
     }
 

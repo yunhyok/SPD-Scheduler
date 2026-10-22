@@ -24,6 +24,6 @@ jobs:
         run: ./tools/Build.ps1
       - uses: actions/upload-artifact@v4
         with:
-          name: SPD-Scheduler-Setup-0.1.8
+          name: SPD-Scheduler-Setup-0.2.0
           path: artifacts/installer/*
           if-no-files-found: error

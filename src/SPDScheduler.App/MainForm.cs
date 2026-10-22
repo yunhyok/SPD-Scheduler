@@ -40,7 +40,7 @@ internal sealed class MainForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 29));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 41));
         Controls.Add(layout);
         var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -66,11 +66,11 @@ internal sealed class MainForm : Form
         tools.Controls.Add(MakeButton("설정", SettingsAsync));
         tools.Controls.Add(MakeButton("감시 상세", () =>
         {
-            using var detail = new Form { Text = "PowerSI 감시 상세", ClientSize = new Size(760, 440),
+            using var detail = new Form { Text = "PowerSI/PowerDC 감시 상세", ClientSize = new Size(760, 440),
                 StartPosition = FormStartPosition.CenterParent, Font = Font, MinimizeBox = false, ShowInTaskbar = false };
             detail.Controls.Add(new TextBox { Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
                 ScrollBars = ScrollBars.Both, WordWrap = false, Text = engine.MonitoringDetails,
-                AccessibleName = "PowerSI 감시 상세 (Ctrl+A, Ctrl+C로 복사)", BackColor = Color.White });
+                AccessibleName = "PowerSI/PowerDC 감시 상세 (Ctrl+A, Ctrl+C로 복사)", BackColor = Color.White });
             detail.ShowDialog(this);
             return Task.CompletedTask;
         }));
@@ -88,7 +88,7 @@ internal sealed class MainForm : Form
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        footer.Controls.Add(new Label { Text = safeMode ? "안전 모드 · PowerSI 실행과 제어가 차단됩니다" : ".spd 파일을 끌어 놓으세요 · 창을 닫아도 트레이에서 계속 실행됩니다", AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding(0, 4, 0, 0) });
+        footer.Controls.Add(new Label { Text = safeMode ? "안전 모드 · PowerSI/PowerDC 실행과 제어 차단 · 기본 PowerSI" : ".spd 추가 시 기본 PowerSI · 대기 작업 우클릭 → 실행 프로그램 변경\n창을 닫아도 트레이에서 계속 실행됩니다", AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding(0, 4, 0, 0) });
         var help = new LinkLabel { Text = "연동 안내", AutoSize = true, Margin = new Padding(4, 4, 0, 0), LinkColor = Color.FromArgb(40, 93, 171) };
         help.LinkClicked += (_, _) => ShowIntegrationHelp();
         footer.Controls.Add(help);
@@ -98,6 +98,14 @@ internal sealed class MainForm : Form
         var jobDetails = new ToolStripMenuItem("작업 상세") { Enabled = false };
         jobDetails.Click += (_, _) => { if (jobDetails.Tag is Guid id) ShowJobDetails(id); };
         rowMenu.Items.Add(jobDetails);
+        var executionTool = new ToolStripMenuItem("실행 프로그램") { Enabled = false };
+        foreach (SimulationTool tool in Enum.GetValues<SimulationTool>())
+        {
+            var item = new ToolStripMenuItem(tool.ToString()) { Tag = tool };
+            item.Click += async (_, _) => await SelectedCommandAsync(id => engine.SetTool(id, tool));
+            executionTool.DropDownItems.Add(item);
+        }
+        rowMenu.Items.Add(executionTool);
         rowMenu.Items.Add("전체 경로 복사 (Ctrl+C)", null, (_, _) => CopyPaths());
         string? logDirectory = null;
         var openLogs = new ToolStripMenuItem("로그 폴더 열기") { Enabled = false };
@@ -110,6 +118,10 @@ internal sealed class MainForm : Form
             JobItem[] selectedJobs = engine.Jobs.Where(j => selected.Contains(j.Id)).ToArray();
             manualComplete.Enabled = selected.Length > 0 && selectedJobs.Length == selected.Length &&
                 selectedJobs.All(j => j.Status is JobStatus.NeedsAttention or JobStatus.Failed);
+            executionTool.Enabled = selected.Length > 0 && selectedJobs.Length == selected.Length &&
+                selectedJobs.All(j => j.Status == JobStatus.Queued);
+            foreach (ToolStripMenuItem item in executionTool.DropDownItems)
+                item.Checked = selectedJobs.Length > 0 && selectedJobs.All(j => j.Tool == (SimulationTool)item.Tag!);
             jobDetails.Enabled = selected.Length == 1;
             jobDetails.Tag = selected.Length == 1 ? selected[0] : null;
             JobItem? job = selected.Length == 1 ? engine.Jobs.FirstOrDefault(j => j.Id == selected[0]) : null;
@@ -149,6 +161,7 @@ internal sealed class MainForm : Form
             if (e.RowIndex < 0) return;
             if (e.ColumnIndex == 1 && grid.Rows[e.RowIndex].Tag is Guid id) ShowJobDetails(id);
             else if (e.ColumnIndex == 2) await ScheduleAsync();
+            else if (e.ColumnIndex == 3) rowMenu.Show(grid, grid.PointToClient(Cursor.Position));
         };
         DragEnter += (_, e) => e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
         DragDrop += async (_, e) =>
@@ -205,7 +218,7 @@ internal sealed class MainForm : Form
         string nextCheck = checkPending ? "확인 중…" : nextCheckAt?.ToLocalTime().ToString("HH:mm:ss") ?? "준비 중";
         checkTiming.Text = $"마지막 확인: {lastCheck}  ·  다음 확인: {nextCheck} ({engine.Settings.PollIntervalMinutes}분 간격)";
         status.Text = (safeMode ? "[안전 모드] " : "") + engine.StatusText;
-        string signature = string.Join("\n", engine.Jobs.Select(j => $"{j.Id}|{j.FilePath}|{j.Status}|{j.CompletedManually}|{j.ScheduledAt:O}|{j.LastError}"));
+        string signature = string.Join("\n", engine.Jobs.Select(j => $"{j.Id}|{j.FilePath}|{j.Tool}|{j.Status}|{j.CompletedManually}|{j.ScheduledAt:O}|{j.LastError}"));
         if (signature == queueSignature) return;
         queueSignature = signature;
         HashSet<Guid> selected = SelectedIds().ToHashSet();
@@ -213,12 +226,13 @@ internal sealed class MainForm : Form
         grid.Rows.Clear();
         foreach (JobItem job in engine.Jobs)
         {
-            int rowIndex = grid.Rows.Add(job.FileName, StatusName(job), job.ScheduledAt?.ToLocalTime().ToString("MM-dd HH:mm") ?? "순서대로");
+            int rowIndex = grid.Rows.Add(job.FileName, StatusName(job), job.ScheduledAt?.ToLocalTime().ToString("MM-dd HH:mm") ?? "순서대로", job.Tool);
             DataGridViewRow row = grid.Rows[rowIndex];
             row.Tag = job.Id;
             row.Cells[0].ToolTipText = job.FilePath;
             row.Cells[1].ToolTipText = $"{job.LastError ?? StatusName(job)}\n로그 폴더: {LogDirectory(job)}\n두 번 클릭하면 작업 상세를 복사할 수 있습니다.";
             row.Cells[2].ToolTipText = job.ScheduledAt is { } at ? $"{at.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz} ({job.ScheduleTimeZone ?? TimeZoneInfo.Local.Id})" : "예약 없이 대기 순서에 따라 실행";
+            row.Cells[3].ToolTipText = "기본 PowerSI · 대기 작업만 우클릭 → 실행 프로그램에서 변경할 수 있습니다.";
             row.Selected = selected.Contains(job.Id);
             row.Cells[1].Style.ForeColor = job.Status switch
             {
@@ -248,6 +262,7 @@ internal sealed class MainForm : Form
         string text = string.Join(Environment.NewLine,
             $"파일: {job.FilePath}",
             $"작업 ID: {job.Id}",
+            $"실행 프로그램: {job.Tool}",
             $"상태: {StatusName(job)} ({job.Status})",
             $"수동 완료: {(job.CompletedManually ? "예" : "아니오")}",
             $"마지막 오류: {job.LastError ?? "없음"}",
@@ -288,13 +303,13 @@ internal sealed class MainForm : Form
         {
             string action = remove ? "확인 필요 작업 제거" : "수동 완료 처리";
             string instruction = remove
-                ? "PowerSI 상태와 결과 저장 여부를 직접 확인한 뒤 목록에서 제거하세요."
+                ? "PowerSI/PowerDC 상태와 결과 저장 여부를 직접 확인한 뒤 목록에서 제거하세요."
                 : "시뮬레이션 완료와 결과 저장을 직접 확인한 작업만 수동 완료 처리하세요.";
             using var confirm = new Form { Text = action, ClientSize = new Size(600, 330), Font = Font,
                 StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false };
             confirm.Controls.Add(new TextBox { Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
                 ScrollBars = ScrollBars.Vertical, BackColor = Color.White,
-                Text = instruction + "\r\n\r\n앱은 목록만 변경하며 PowerSI 저장·종료를 실행하지 않습니다. 실행 기록과 로그는 보존합니다.\r\n대기열은 일시 중지되며, 다시 진행하려면 [시작]을 눌러야 합니다.\r\n\r\n선택한 작업:\r\n" +
+                Text = instruction + "\r\n\r\n앱은 목록만 변경하며 PowerSI/PowerDC 저장·종료를 실행하지 않습니다. 실행 기록과 로그는 보존합니다.\r\n대기열은 일시 중지되며, 다시 진행하려면 [시작]을 눌러야 합니다.\r\n\r\n선택한 작업:\r\n" +
                     string.Join("\r\n", selected.Select(j => $"• {j.FileName} ({StatusName(j.Status)})")), AccessibleName = "수동 처리 확인 내용" });
             var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 45, Padding = new Padding(6), FlowDirection = FlowDirection.RightToLeft };
             var cancel = new Button { Text = "취소", DialogResult = DialogResult.Cancel, AutoSize = true };
@@ -334,7 +349,7 @@ internal sealed class MainForm : Form
         using var dialog = new Form { Text = "실행 예약", Font = Font, ClientSize = new Size(345, 180), StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
         var label = new Label { Text = $"선택한 {ids.Length}개 파일의 실행 가능 시각", AutoSize = true, Location = new Point(18, 17) };
         var picker = new DateTimePicker { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd  HH:mm:ss", Value = first?.ScheduledAt?.LocalDateTime ?? DateTime.Now.AddMinutes(1), Location = new Point(18, 48), Width = 306 };
-        var note = new Label { Text = "PC의 현재 표준 시간대 기준입니다.\n예약 시각이 지나도 PowerSI가 사용 중이면 기다립니다.", AutoSize = true, Location = new Point(18, 81), ForeColor = Color.DimGray };
+        var note = new Label { Text = "PC의 현재 표준 시간대 기준입니다.\n예약 이후에도 시뮬레이션 사용 중이면 기다립니다.", AutoSize = true, Location = new Point(18, 81), ForeColor = Color.DimGray };
         var ok = new Button { Text = "예약", DialogResult = DialogResult.OK, Location = new Point(165, 137), Size = new Size(76, 29) };
         var cancel = new Button { Text = "취소", DialogResult = DialogResult.Cancel, Location = new Point(249, 137), Size = new Size(76, 29) };
         dialog.Controls.AddRange([label, picker, note, ok, cancel]);
@@ -364,11 +379,12 @@ internal sealed class MainForm : Form
     }
 
     private void ShowIntegrationHelp() => MessageBox.Show(this,
-        "PowerSI 연동은 실제 설치 환경에서 아직 검증되지 않았습니다.\n\n" +
-        "설정에서 PowerSI 실행 파일과 사용 환경에 맞는 완료 판정 규칙을 확인하세요. 규칙은 SPD 내용, 실행 시작 표시, 완료 표시를 각각 식별해야 합니다. 근거가 없거나 읽을 수 없으면 자동으로 완료 처리하지 않습니다.\n\n" +
-        "일시 중지는 다음 작업의 자동 시작을 멈춥니다. 현재 PowerSI 작업은 계속 실행됩니다. 앱 종료도 PowerSI를 강제로 종료하지 않습니다.\n\n" +
+        "PowerSI/PowerDC 연동은 실제 설치 환경에서 아직 검증되지 않았습니다.\n\n" +
+        "설정에서 사용할 PowerSI/PowerDC 실행 파일과 사용 환경에 맞는 완료 판정 규칙을 확인하세요. 규칙은 SPD 내용, 실행 시작 표시, 완료 표시를 각각 식별해야 합니다. 근거가 없거나 읽을 수 없으면 자동으로 완료 처리하지 않습니다.\n\n" +
+        "일시 중지는 다음 작업의 자동 시작을 멈춥니다. 현재 PowerSI/PowerDC 작업은 계속 실행됩니다. 앱 종료도 PowerSI/PowerDC를 강제로 종료하지 않습니다.\n\n" +
+        "새 SPD는 PowerSI로 추가됩니다. 대기 작업을 우클릭한 뒤 [실행 프로그램]에서 PowerDC로 변경할 수 있습니다. SPD는 선택한 프로그램에서 바로 실행할 수 있도록 저장되어 있어야 합니다. 앱은 저장된 해석 설정을 사용하며, 프로그램 선택만으로 해석 종류를 변환하지 않습니다. PowerDC 결과 XML은 작업별 로그 폴더에 저장합니다.\n\n" +
         "단축키: Ctrl+O 파일 추가 · Ctrl+C 전체 경로 복사 · F2 예약 · Delete 제거 · Esc 트레이로 숨기기",
-        "PowerSI 연동 안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        "PowerSI/PowerDC 연동 안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
     private static string StatusName(JobItem job) => job.Status == JobStatus.Completed && job.CompletedManually ? "완료 (수동)" : StatusName(job.Status);
 
@@ -411,6 +427,8 @@ internal sealed class QueueGrid : DataGridView
         Columns.Add(new DataGridViewTextBoxColumn { Name = "File", HeaderText = "파일 이름", FillWeight = 64, MinimumWidth = 170, SortMode = DataGridViewColumnSortMode.NotSortable });
         Columns.Add(new DataGridViewTextBoxColumn { Name = "State", HeaderText = "상태", FillWeight = 16, MinimumWidth = 90, SortMode = DataGridViewColumnSortMode.NotSortable });
         Columns.Add(new DataGridViewTextBoxColumn { Name = "Schedule", HeaderText = "실행 예약", FillWeight = 23, MinimumWidth = 125, SortMode = DataGridViewColumnSortMode.NotSortable });
+        Columns.Add(new DataGridViewTextBoxColumn { Name = "Tool", HeaderText = "실행 프로그램", FillWeight = 18, MinimumWidth = 100, SortMode = DataGridViewColumnSortMode.NotSortable });
+        Columns[3].DisplayIndex = 1;
         AccessibleName = "SPD 작업 대기열";
         animation.Tick += (_, _) => AdvanceMarquee();
         VisibleChanged += (_, _) => { if (Visible) { ResetMarquee(); animation.Start(); } else animation.Stop(); };

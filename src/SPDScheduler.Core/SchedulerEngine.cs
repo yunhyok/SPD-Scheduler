@@ -57,7 +57,7 @@ public sealed class SchedulerEngine
                 var fullPath = Path.GetFullPath(path);
                 if (!string.Equals(Path.GetExtension(fullPath), ".spd", StringComparison.OrdinalIgnoreCase) || !File.Exists(fullPath))
                 { rejected.Add(path); continue; }
-                if (Jobs.Any(j => (j.Status == JobStatus.Queued || IsActive(j)) &&
+                if (Jobs.Any(j => j.Tool == SimulationTool.PowerSI && (j.Status == JobStatus.Queued || IsActive(j)) &&
                     string.Equals(j.FilePath, fullPath, StringComparison.OrdinalIgnoreCase)))
                 { rejected.Add(path + " (이미 대기/실행 중)"); continue; }
                 Document.Jobs.Add(new JobItem { FilePath = fullPath, Order = order++ });
@@ -90,7 +90,7 @@ public sealed class SchedulerEngine
             _resolved.Remove(id);
             string action = remove ? "목록에서 제거" : "완료 처리";
             _store.AppendLog($"사용자 수동 정리 요청 · {action} · 이전 상태: {job.Status} · 실행 ID: {job.Run?.Id.ToString() ?? "없음"} · " +
-                $"PID: {job.Run?.Process?.Pid.ToString() ?? "없음"} · 이전 오류: {job.LastError ?? "없음"} · PowerSI 명령 없음", id);
+                $"PID: {job.Run?.Process?.Pid.ToString() ?? "없음"} · 이전 오류: {job.LastError ?? "없음"} · 시뮬레이션 명령 없음", id);
             var previousStatus = job.Status;
             var previousFinishedAt = job.FinishedAt;
             bool previousManual = job.CompletedManually;
@@ -128,6 +128,26 @@ public sealed class SchedulerEngine
         Save();
     }
 
+    public void SetTool(Guid id, SimulationTool tool)
+    {
+        if (!Enum.IsDefined(tool)) throw new ArgumentException("시뮬레이션 도구가 유효하지 않습니다.", nameof(tool));
+        if (!_tick.Wait(0)) throw new InvalidOperationException("상태 확인 중입니다. 확인이 끝난 뒤 다시 시도하세요.");
+        try
+        {
+            var job = Get(id);
+            if (job.Status != JobStatus.Queued) throw new InvalidOperationException("대기 작업만 시뮬레이션 도구를 변경할 수 있습니다.");
+            if (Jobs.Any(other => other.Id != id && other.Tool == tool && (other.Status == JobStatus.Queued || IsActive(other)) &&
+                string.Equals(other.FilePath, job.FilePath, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("같은 SPD와 시뮬레이션 도구가 이미 대기/실행 중입니다.");
+            var previous = job.Tool;
+            job.Tool = tool;
+            _gate.Reset();
+            try { Save(); }
+            catch { job.Tool = previous; throw; }
+        }
+        finally { _tick.Release(); }
+    }
+
     public void Retry(Guid id)
     {
         var job = Get(id);
@@ -158,7 +178,7 @@ public sealed class SchedulerEngine
         if (job.Status is not (JobStatus.Failed or JobStatus.NeedsAttention))
             throw new InvalidOperationException("실패 또는 확인 필요 작업만 재시도/건너뛰기 할 수 있습니다.");
         if (job.Status == JobStatus.NeedsAttention && !_resolved.Contains(job.Id))
-            throw new InvalidOperationException("관련 PowerSI가 종료되었는지 확인되지 않았습니다. PowerSI를 직접 확인하고 잠시 기다리세요.");
+            throw new InvalidOperationException("관련 시뮬레이션이 종료되었는지 확인되지 않았습니다. PowerSI/PowerDC를 직접 확인하고 잠시 기다리세요.");
     }
 
     public void Start()
@@ -166,7 +186,12 @@ public sealed class SchedulerEngine
         SettingsValidator.Validate(Settings);
         if (Jobs.Any(j => j.Status == JobStatus.NeedsAttention))
             throw new InvalidOperationException("확인 필요 작업을 먼저 정리하세요.");
-        try { _runner.ValidateConfiguration(Settings); }
+        try
+        {
+            foreach (var tool in Jobs.Where(job => job.Status == JobStatus.Queued).Select(job => job.Tool)
+                .Distinct().DefaultIfEmpty(Jobs.FirstOrDefault(IsActive)?.Tool ?? SimulationTool.PowerSI))
+                _runner.ValidateConfiguration(Settings, tool);
+        }
         catch (Exception ex)
         {
             IsArmed = false;
@@ -177,7 +202,7 @@ public sealed class SchedulerEngine
         Save();
         _persistenceFailed = false;
         IsArmed = true;
-        StatusText = "자동 진행 활성화 · PowerSI 상태를 확인합니다.";
+        StatusText = "자동 진행 활성화 · PowerSI/PowerDC 상태를 확인합니다.";
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
@@ -225,7 +250,7 @@ public sealed class SchedulerEngine
             var active = Jobs.Where(IsActive).ToArray();
             if (active.Length > 1)
             {
-                foreach (var item in active) Attention(item, "여러 미정리 실행이 있습니다. PowerSI를 확인하세요.");
+                foreach (var item in active) Attention(item, "여러 미정리 실행이 있습니다. PowerSI/PowerDC를 확인하세요.");
                 Save();
                 return;
             }
@@ -270,7 +295,7 @@ public sealed class SchedulerEngine
                 return;
             }
             // Recheck shared configuration before consuming a queued job or creating its run record.
-            _runner.ValidateConfiguration(Settings);
+            _runner.ValidateConfiguration(Settings, next.Tool);
             next.Run = new RunRecord { CreatedAt = now };
             next.Run.DirectoryPath = Path.Combine(_store.DataDirectory, "runs", next.Run.Id.ToString("N"));
             next.Status = JobStatus.Starting;
@@ -281,7 +306,7 @@ public sealed class SchedulerEngine
             {
                 next.Run.Process = await _runner.LaunchAsync(next, Settings, cancellationToken);
                 Save();
-                StatusText = "PowerSI 시작 확인 중 · " + next.FileName;
+                StatusText = next.Tool + " 시작 확인 중 · " + next.FileName;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -315,7 +340,7 @@ public sealed class SchedulerEngine
         _resolved.Remove(job.Id);
         if (!snapshot.Complete)
         {
-            StatusText = "PowerSI 관측 대기 · " + (snapshot.Error ?? "정보 부족");
+            StatusText = job.Tool + " 관측 대기 · " + (snapshot.Error ?? "정보 부족");
             return;
         }
         if (run.FailureReason is not null)
@@ -361,7 +386,7 @@ public sealed class SchedulerEngine
                 job.LastError = null;
                 break;
             case RunStage.Succeeded:
-                if (observation.ProcessAlive) Attention(job, "저장 후 PowerSI/solver 종료가 확인되지 않았습니다.");
+                if (observation.ProcessAlive) Attention(job, "저장 후 시뮬레이션/solver 종료가 확인되지 않았습니다.");
                 else Finish(job, true, observation.Detail);
                 break;
             case RunStage.StartFailed:

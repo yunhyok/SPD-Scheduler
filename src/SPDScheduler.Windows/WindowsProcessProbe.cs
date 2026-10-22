@@ -19,7 +19,7 @@ public sealed class WindowsProcessProbe : IProcessProbe
         var samples = snapshot.Processes.ToArray();
         for (int i = 0; i < samples.Length; i++)
         {
-            if (!IsPowerSi(samples[i].Identity.ImagePath)) continue;
+            if (!IsSimulationGui(samples[i].Identity.ImagePath)) continue;
             var status = await WindowsTextWorker.ReadAsync(samples[i].Identity, cancellationToken).ConfigureAwait(false);
             var signal = ClassifyStatus(status);
             samples[i] = samples[i] with { Signal = signal, Evidence = StatusEvidence(status) };
@@ -101,10 +101,10 @@ public sealed class WindowsProcessProbe : IProcessProbe
             if (sample != null && SameIdentity(old, sample.Identity)) selected[old.Pid] = sample;
             else if (sample != null) tracked.Remove(old.Pid);
         }
-        foreach (var row in rows.Where(pair => IsPowerSi(pair.Value.Name)))
+        foreach (var row in rows.Where(pair => IsSimulationGui(pair.Value.Name)))
         {
             var sample = Read(row.Key);
-            if (sample != null && IsPowerSi(sample.Identity.ImagePath)) selected[row.Key] = sample;
+            if (sample != null && IsSimulationGui(sample.Identity.ImagePath)) selected[row.Key] = sample;
         }
         bool added;
         do
@@ -121,7 +121,7 @@ public sealed class WindowsProcessProbe : IProcessProbe
         } while (added);
         foreach (var sample in selected.Values) tracked[sample.Identity.Pid] = sample.Identity;
         return new(DateTimeOffset.UtcNow, selected.Values.OrderBy(sample => sample.Identity.Pid).ToArray(), complete,
-            complete ? null : "A PowerSI process identity or resource counter could not be read.", LogicalProcessorCount: LogicalProcessorCount);
+            complete ? null : "A PowerSI/PowerDC process identity or resource counter could not be read.", LogicalProcessorCount: LogicalProcessorCount);
 
         ProcessSample? Read(int pid)
         {
@@ -138,6 +138,11 @@ public sealed class WindowsProcessProbe : IProcessProbe
             return sample;
         }
     }
+
+    internal static bool IsSimulationGui(string name) => IsPowerSi(name) || IsPowerDc(name);
+
+    internal static bool IsPowerDc(string name) =>
+        Path.GetFileNameWithoutExtension(name).Equals("powerdc", StringComparison.OrdinalIgnoreCase);
 
     internal static bool IsPowerSi(string name) =>
         Path.GetFileNameWithoutExtension(name).Equals("powersi", StringComparison.OrdinalIgnoreCase) ||

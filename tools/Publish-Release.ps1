@@ -9,7 +9,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$version = '0.1.8'
+$version = '0.2.0'
 $installer = (Resolve-Path -LiteralPath $InstallerPath).Path
 $manifestFile = Join-Path (Split-Path $installer) 'build-manifest.json'
 $hashFile = "$installer.sha256"
@@ -57,6 +57,7 @@ try {
         }
         $validationNote = "Other-PC PowerSI validation passed for $($evidence.powersiVersion): $($workflows.name -join ', ')."
     }
+    $validationNote += ' PowerDC GUI startup, saved-workflow restoration, completion detection and result saving remain unverified on real hardware.'
     Write-Host "Package verification passed for v$version ($headCommit)."
     if ($ValidateOnly) { return }
 

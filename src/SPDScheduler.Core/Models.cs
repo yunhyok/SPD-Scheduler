@@ -1,11 +1,13 @@
 namespace SPDScheduler.Core;
 
 public enum JobStatus { Queued, Starting, Running, Saving, Completed, Failed, NeedsAttention }
+public enum SimulationTool { PowerSI = 0, PowerDC = 1 }
 
 public sealed class JobItem
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public string FilePath { get; set; } = "";
+    public SimulationTool Tool { get; set; } = SimulationTool.PowerSI;
     public long Order { get; set; }
     public DateTimeOffset? ScheduledAt { get; set; }
     public string? ScheduleTimeZone { get; set; }
@@ -41,6 +43,7 @@ public sealed class RunRecord
 
 public sealed class CompletionRule
 {
+    public SimulationTool Tool { get; set; } = SimulationTool.PowerSI;
     public string Workflow { get; set; } = "";
     public string SpdPattern { get; set; } = "";
     public string StartedPattern { get; set; } = "";
@@ -52,6 +55,7 @@ public sealed class AppSettings
     public int ResourcePolicyVersion { get; set; } = 1;
     public bool AllowBbsPostProcessing { get; set; } = true;
     public string PowerSiPath { get; set; } = "";
+    public string PowerDcPath { get; set; } = "";
     public int PollIntervalMinutes { get; set; } = 1;
     public int IdleSeconds { get; set; } = 60;
     public double IdleCpuPercent { get; set; } = 50;
@@ -63,7 +67,7 @@ public sealed class AppSettings
 
 public sealed class QueueDocument
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
     public AppSettings Settings { get; set; } = new();
     public List<JobItem> Jobs { get; set; } = [];
 }
@@ -96,7 +100,7 @@ public interface IProcessProbe
 
 public interface IPowerSiRunner
 {
-    void ValidateConfiguration(AppSettings settings);
+    void ValidateConfiguration(AppSettings settings, SimulationTool tool = SimulationTool.PowerSI);
     Task<ProcessIdentity> LaunchAsync(JobItem job, AppSettings settings, CancellationToken cancellationToken);
     Task<RunObservation> InspectAsync(JobItem job, AppSettings settings, ProcessSnapshot snapshot, CancellationToken cancellationToken);
     Task RequestSaveAndExitAsync(JobItem job, CancellationToken cancellationToken);

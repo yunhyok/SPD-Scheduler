@@ -7,6 +7,7 @@ namespace SPDScheduler.App;
 internal sealed class SettingsForm : Form
 {
     private readonly TextBox executable = new() { Dock = DockStyle.Fill, AccessibleName = "PowerSI 실행 파일 경로" };
+    private readonly TextBox powerDcExecutable = new() { Dock = DockStyle.Fill, AccessibleName = "PowerDC 실행 파일 경로" };
     private readonly NumericUpDown idleSeconds;
     private readonly NumericUpDown cpu;
     private readonly NumericUpDown memory;
@@ -21,8 +22,8 @@ internal sealed class SettingsForm : Form
     {
         Text = "SPD Scheduler 설정";
         Font = new Font("맑은 고딕", 9F);
-        ClientSize = new Size(716, 602);
-        MinimumSize = new Size(690, 602);
+        ClientSize = new Size(760, 640);
+        MinimumSize = new Size(740, 620);
         StartPosition = FormStartPosition.CenterParent;
         AutoScaleMode = AutoScaleMode.Dpi;
         MinimizeBox = false;
@@ -30,45 +31,30 @@ internal sealed class SettingsForm : Form
         BackColor = Color.FromArgb(246, 248, 251);
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), ColumnCount = 1, RowCount = 8 };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 37));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 123));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 74));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 111));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
         Controls.Add(root);
-        root.Controls.Add(new Label { Text = "PowerSI 실행 파일", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, 0, 0);
-        var pathRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, Margin = Padding.Empty };
-        pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 77));
-        pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
-        executable.Text = string.IsNullOrWhiteSpace(current.PowerSiPath)
-            ? PowerSiDiscovery.FindInstalled().FirstOrDefault() ?? ""
-            : current.PowerSiPath;
-        pathRow.Controls.Add(executable);
-        var browse = new Button { Text = "찾아보기", Dock = DockStyle.Fill, Margin = new Padding(6, 0, 0, 7) };
-        browse.Click += (_, _) =>
-        {
-            using var picker = new OpenFileDialog { Filter = "PowerSI 실행 파일 (*.exe)|*.exe", Title = "PowerSI 실행 파일 선택", CheckFileExists = true };
-            if (picker.ShowDialog(this) == DialogResult.OK) executable.Text = picker.FileName;
-        };
-        pathRow.Controls.Add(browse);
-        var discover = new Button { Text = "자동 찾기", Dock = DockStyle.Fill, Margin = new Padding(6, 0, 0, 7) };
-        discover.Click += (_, _) =>
-        {
-            try
-            {
-                var found = PowerSiDiscovery.FindInstalled();
-                if (found.Count == 0) MessageBox.Show(this, "설치 경로에서 PowerSI를 찾지 못했습니다. 찾아보기로 지정하세요.", Text);
-                else executable.Text = found[0];
-            }
-            catch (Exception ex) { MessageBox.Show(this, ex.Message, Text); }
-        };
-        pathRow.Controls.Add(discover);
-        root.Controls.Add(pathRow, 0, 1);
+        root.Controls.Add(new Label { Text = "실행 파일 · 사용할 프로그램의 경로만 지정하세요", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, 0, 0);
+        var pathRows = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 2, Margin = Padding.Empty };
+        pathRows.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72));
+        pathRows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        pathRows.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 77));
+        pathRows.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
+        pathRows.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        pathRows.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        executable.Text = current.PowerSiPath;
+        powerDcExecutable.Text = current.PowerDcPath;
+        AddExecutablePath(pathRows, executable, SimulationTool.PowerSI, 0);
+        AddExecutablePath(pathRows, powerDcExecutable, SimulationTool.PowerDC, 1);
+        root.Controls.Add(pathRows, 0, 1);
 
         var thresholds = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 3, Margin = new Padding(0, 8, 0, 6) };
+        for (int row = 0; row < 3; row++) thresholds.RowStyles.Add(new RowStyle(SizeType.Percent, 100F / 3));
         thresholds.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 31));
         thresholds.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 19));
         thresholds.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 31));
@@ -96,13 +82,17 @@ internal sealed class SettingsForm : Form
             Dock = DockStyle.Fill, BackgroundColor = Color.White, BorderStyle = BorderStyle.FixedSingle,
             AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersWidth = 24,
             AllowUserToResizeRows = false, SelectionMode = DataGridViewSelectionMode.CellSelect,
-            AccessibleName = "작업별 PowerSI 완료 판정 규칙", ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText
+            AccessibleName = "작업별 PowerSI/PowerDC 완료 판정 규칙", ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText
         };
         rules.Columns.Add(new DataGridViewTextBoxColumn { Name = "Workflow", HeaderText = "작업 이름", FillWeight = 22 });
         rules.Columns.Add(new DataGridViewTextBoxColumn { Name = "SPD", HeaderText = "SPD 내용 패턴", FillWeight = 26 });
         rules.Columns.Add(new DataGridViewTextBoxColumn { Name = "Started", HeaderText = "시작 패턴 (필수)", FillWeight = 26 });
         rules.Columns.Add(new DataGridViewTextBoxColumn { Name = "Completed", HeaderText = "완료 표시 패턴", FillWeight = 26 });
-        foreach (CompletionRule rule in current.CompletionRules) rules.Rows.Add(rule.Workflow, rule.SpdPattern, rule.StartedPattern, rule.CompletedPattern);
+        rules.Columns.Add(new DataGridViewComboBoxColumn { Name = "Tool", HeaderText = "프로그램", FillWeight = 20,
+            DataSource = Enum.GetValues<SimulationTool>(), ValueType = typeof(SimulationTool) });
+        rules.Columns[4].DisplayIndex = 0;
+        rules.DefaultValuesNeeded += (_, e) => e.Row.Cells[4].Value = SimulationTool.PowerSI;
+        foreach (CompletionRule rule in current.CompletionRules) rules.Rows.Add(rule.Workflow, rule.SpdPattern, rule.StartedPattern, rule.CompletedPattern, rule.Tool);
         root.Controls.Add(rules, 0, 5);
         var location = new TextBox { Text = "저장 폴더: " + dataDirectory, ReadOnly = true, BorderStyle = BorderStyle.None, BackColor = BackColor, Dock = DockStyle.Fill, Margin = new Padding(0, 10, 0, 0), AccessibleName = "설정 및 대기열 저장 폴더" };
         root.Controls.Add(location, 0, 6);
@@ -121,10 +111,35 @@ internal sealed class SettingsForm : Form
         CancelButton = cancel;
     }
 
+    private void AddExecutablePath(TableLayoutPanel panel, TextBox input, SimulationTool tool, int row)
+    {
+        panel.Controls.Add(new Label { Text = tool.ToString(), AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 3, 7) }, 0, row);
+        panel.Controls.Add(input, 1, row);
+        var browse = new Button { Text = "찾아보기", Dock = DockStyle.Fill, Margin = new Padding(6, 0, 0, 7), AccessibleName = tool + " 실행 파일 찾아보기" };
+        browse.Click += (_, _) =>
+        {
+            using var picker = new OpenFileDialog { Filter = tool + " 실행 파일 (*.exe)|*.exe", Title = tool + " 실행 파일 선택", CheckFileExists = true };
+            if (picker.ShowDialog(this) == DialogResult.OK) input.Text = picker.FileName;
+        };
+        panel.Controls.Add(browse, 2, row);
+        var discover = new Button { Text = "자동 찾기", Dock = DockStyle.Fill, Margin = new Padding(6, 0, 0, 7), AccessibleName = tool + " 자동 찾기" };
+        discover.Click += (_, _) =>
+        {
+            try
+            {
+                var found = PowerSiDiscovery.FindInstalled(tool);
+                if (found.Count == 0) MessageBox.Show(this, $"설치 경로에서 {tool}를 찾지 못했습니다. 찾아보기로 지정하세요.", Text);
+                else input.Text = found[0];
+            }
+            catch (Exception ex) { MessageBox.Show(this, ex.Message, Text); }
+        };
+        panel.Controls.Add(discover, 3, row);
+    }
+
     private static NumericUpDown AddNumber(TableLayoutPanel panel, string label, decimal value, decimal minimum, decimal maximum, int column, int row, int decimals = 0)
     {
         panel.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(column == 0 ? 0 : 14, 2, 3, 2) }, column, row);
-        var input = new NumericUpDown { Minimum = minimum, Maximum = maximum, DecimalPlaces = decimals, Value = Math.Clamp(value, minimum, maximum), Dock = DockStyle.Fill, Margin = new Padding(0, 2, 0, 2), AccessibleName = label };
+        var input = new NumericUpDown { Minimum = minimum, Maximum = maximum, DecimalPlaces = decimals, Value = Math.Clamp(value, minimum, maximum), Anchor = AnchorStyles.Left | AnchorStyles.Right, Margin = new Padding(0, 2, 0, 2), AccessibleName = label };
         panel.Controls.Add(input, column + 1, row);
         return input;
     }
@@ -135,23 +150,23 @@ internal sealed class SettingsForm : Form
         {
             rules.EndEdit();
             string path = executable.Text.Trim();
-            if (path.Length == 0)
-                throw new ArgumentException("PowerSI 실행 경로가 비어 있습니다. 자동 찾기 또는 찾아보기로 powersi.exe/pwrsi.exe를 지정한 뒤 저장하세요.");
-            path = PowerSiDiscovery.ResolveExecutablePath(path);
+            string powerDcPath = powerDcExecutable.Text.Trim();
+            if (path.Length > 0) path = PowerSiDiscovery.ResolveExecutablePath(path, SimulationTool.PowerSI);
+            if (powerDcPath.Length > 0) powerDcPath = PowerSiDiscovery.ResolveExecutablePath(powerDcPath, SimulationTool.PowerDC);
             var completedRules = new List<CompletionRule>();
             foreach (DataGridViewRow row in rules.Rows)
             {
                 if (row.IsNewRow) continue;
-                string[] values = row.Cells.Cast<DataGridViewCell>().Select(c => c.Value?.ToString()?.Trim() ?? "").ToArray();
+                string[] values = row.Cells.Cast<DataGridViewCell>().Take(4).Select(c => c.Value?.ToString()?.Trim() ?? "").ToArray();
                 if (values.All(string.IsNullOrEmpty)) continue;
                 if (values.Any(string.IsNullOrEmpty)) throw new ArgumentException($"규칙 {row.Index + 1}행의 작업 이름, SPD 패턴, 시작 패턴, 완료 패턴을 모두 입력하세요.");
                 foreach (string pattern in values.Skip(1)) _ = new Regex(pattern, RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(200));
-                completedRules.Add(new CompletionRule { Workflow = values[0], SpdPattern = values[1], StartedPattern = values[2], CompletedPattern = values[3] });
+                completedRules.Add(new CompletionRule { Tool = row.Cells[4].Value is SimulationTool tool ? tool : SimulationTool.PowerSI, Workflow = values[0], SpdPattern = values[1], StartedPattern = values[2], CompletedPattern = values[3] });
             }
             Result = new AppSettings
             {
                 AllowBbsPostProcessing = allowBbs.Checked,
-                PowerSiPath = path, PollIntervalMinutes = (int)polling.Value,
+                PowerSiPath = path, PowerDcPath = powerDcPath, PollIntervalMinutes = (int)polling.Value,
                 IdleSeconds = (int)idleSeconds.Value, IdleCpuPercent = (double)cpu.Value,
                 IdleMemoryMiB = (int)memory.Value, IdleIoKiBPerSecond = (int)io.Value,
                 StartTimeoutMinutes = (int)timeout.Value, CompletionRules = completedRules
