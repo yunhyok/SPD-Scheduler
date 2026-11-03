@@ -107,6 +107,6 @@ dotnet run --project tests/SPDScheduler.Tests -c Release --no-build
 
 현재 설치파일은 코드 서명되지 않았습니다. PowerSI/PowerDC 및 Cadence 설치파일은 포함하지 않으며 Cadence와 독립적인 도구입니다.
 
-## Installer 0.2.1
+## Installer 0.2.2
 
 The destination page is shown on fresh installs and reinstalls, with a Browse button for another drive or folder. New all-user installs default to Windows Program Files. Existing install mode, selected path and user settings are preserved. Choosing the current-user mode keeps its per-user default and needs no administrator rights.
