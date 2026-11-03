@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.2.0"
+  #define AppVersion "0.2.1"
 #endif
 #define AppName "SPD Scheduler"
 
@@ -9,10 +9,14 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher=yunhyok
 AppPublisherURL=https://github.com/yunhyok/SPD-Scheduler
-DefaultDirName={localappdata}\Programs\SPD Scheduler
+DisableDirPage=no
+UsePreviousAppDir=yes
+UsePreviousPrivileges=yes
+DefaultDirName={autopf}\SPD Scheduler
 DefaultGroupName=SPD Scheduler
 DisableProgramGroupPage=yes
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
@@ -51,4 +55,4 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: 
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "SPDScheduler"; ValueData: """{app}\SPDScheduler.exe"""; Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
-Filename: "{app}\SPDScheduler.exe"; Parameters: "--show"; Description: "{cm:OpenScheduler}"; Flags: nowait postinstall skipifsilent unchecked
+Filename: "{app}\SPDScheduler.exe"; Parameters: "--show"; Description: "{cm:OpenScheduler}"; Flags: nowait postinstall skipifsilent runasoriginaluser unchecked

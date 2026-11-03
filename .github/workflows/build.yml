@@ -11,6 +11,8 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -22,8 +24,18 @@ jobs:
       - name: Build, run console tests, publish, and package
         shell: pwsh
         run: ./tools/Build.ps1
+      - name: Verify custom destination and reinstall
+        shell: pwsh
+        run: ./scripts/test-installer-path.ps1 -Installer artifacts/installer/SPD-Scheduler-Setup-0.2.1.exe
       - uses: actions/upload-artifact@v4
         with:
-          name: SPD-Scheduler-Setup-0.2.0
+          name: SPD-Scheduler-Setup-0.2.1
           path: artifacts/installer/*
           if-no-files-found: error
+
+      - name: Publish tagged installer
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: gh release create $env:GITHUB_REF_NAME artifacts/installer/SPD-Scheduler-Setup-0.2.1.exe artifacts/installer/SPD-Scheduler-Setup-0.2.1.exe.sha256 --verify-tag --target $env:GITHUB_SHA --generate-notes

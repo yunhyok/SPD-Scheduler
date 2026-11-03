@@ -106,3 +106,7 @@ dotnet run --project tests/SPDScheduler.Tests -c Release --no-build
 짧은 시뮬레이션의 시작 전이를 놓쳤거나 로그 규칙이 없으면 완료를 자동 승인하지 않습니다. SPD 모드 식별은 UTF-8/BOM 텍스트의 각 줄을 읽으며, 1 MiB를 넘는 단일 줄이나 모호한 규칙은 거부합니다. 대규모 SPD의 첫 규칙 탐색에는 시간이 걸릴 수 있습니다. 로그 판정은 최근 256 KiB를 사용합니다. 지원 모드·인코딩·상태 문구는 별도 PC 검증 결과에 한정됩니다.
 
 현재 설치파일은 코드 서명되지 않았습니다. PowerSI/PowerDC 및 Cadence 설치파일은 포함하지 않으며 Cadence와 독립적인 도구입니다.
+
+## Installer 0.2.1
+
+The destination page is shown on fresh installs and reinstalls, with a Browse button for another drive or folder. New all-user installs default to Windows Program Files. Existing install mode, selected path and user settings are preserved. Choosing the current-user mode keeps its per-user default and needs no administrator rights.
