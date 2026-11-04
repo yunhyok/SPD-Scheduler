@@ -9,10 +9,11 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$version = '0.2.0'
+$version = '0.2.3'
 $installer = (Resolve-Path -LiteralPath $InstallerPath).Path
 $manifestFile = Join-Path (Split-Path $installer) 'build-manifest.json'
 $hashFile = "$installer.sha256"
+$portable = Join-Path (Split-Path $installer) "SPD-Scheduler-$version-win-x64.zip"
 $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
 $evidence = if ($EvidencePath) { Get-Content -LiteralPath (Resolve-Path -LiteralPath $EvidencePath).Path -Raw | ConvertFrom-Json } else { $null }
 $changeNotes = if ($NotesPath) { Get-Content -LiteralPath $NotesPath -Raw } else { "SPD Scheduler $version" }
@@ -36,6 +37,11 @@ try {
     if ((Get-Content -LiteralPath $hashFile -Raw).Trim() -cne "$actualHash  $([IO.Path]::GetFileName($installer))") {
         throw 'The installer SHA256 sidecar does not match the installer.'
     }
+    $portableHash = (Get-FileHash -LiteralPath $portable -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($manifest.portableSha256 -ine $portableHash -or
+        (Get-Content -LiteralPath "$portable.sha256" -Raw).Trim() -cne "$portableHash  $([IO.Path]::GetFileName($portable))") {
+        throw 'The portable ZIP must match the build manifest and its SHA256 sidecar.'
+    }
     $validationNote = 'PowerSI integration validation is pending. This release is published for installation and updates; it does not certify all PowerSI workflows.'
     if ($null -ne $evidence) {
         if ($evidence.sourceCommit -cne $headCommit -or $evidence.installerSha256 -ine $actualHash) {
@@ -57,7 +63,6 @@ try {
         }
         $validationNote = "Other-PC PowerSI validation passed for $($evidence.powersiVersion): $($workflows.name -join ', ')."
     }
-    $validationNote += ' PowerDC GUI startup, saved-workflow restoration, completion detection and result saving remain unverified on real hardware.'
     Write-Host "Package verification passed for v$version ($headCommit)."
     if ($ValidateOnly) { return }
 
@@ -66,14 +71,14 @@ try {
         @"
 $changeNotes
 
-Windows 10/11 x64 user-level installer with the .NET 10 runtime included.
+Windows 10/11 x64 installer and portable ZIP with the .NET 10 runtime included.
 $validationNote
 Source commit: $headCommit
 Installer SHA256: $actualHash
 
 The installer is unsigned. Windows may show an unknown-publisher or SmartScreen warning.
 "@ | Set-Content -LiteralPath $notesFile.FullName -Encoding utf8
-        & gh release create "v$version" $installer $hashFile --repo yunhyok/SPD-Scheduler --target $headCommit --title "SPD Scheduler v$version" --notes-file $notesFile.FullName --latest
+        & gh release create "v$version" $installer $hashFile $portable "$portable.sha256" --repo yunhyok/SPD-Scheduler --target $headCommit --title "SPD Scheduler v$version" --notes-file $notesFile.FullName --latest
         if ($LASTEXITCODE -ne 0) { throw "GitHub release creation failed ($LASTEXITCODE)." }
     }
     finally { Remove-Item -LiteralPath $notesFile.FullName -Force }

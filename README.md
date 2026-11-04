@@ -4,7 +4,7 @@
 
 Windows 트레이에서 PowerSI·PowerDC SPD 파일의 순차 실행과 예약 실행을 관리합니다. C# WinForms / .NET 10, Windows 10·11 x64를 대상으로 합니다.
 
-**현재 버전: v0.2.0.** 설치·업데이트 관리를 위해 [정식 GitHub Release](https://github.com/yunhyok/SPD-Scheduler/releases/latest)로 제공합니다. 실제 PowerSI·PowerDC 2025.1 GUI 연동의 전체 실측 검증은 남아 있습니다. `-tcl` GUI 실행, 저장 모드 복원, 시작·완료·저장·종료는 별도 허용 PC에서 [검증 절차](docs/VALIDATION.md)에 따라 확인해야 합니다.
+**현재 버전 v0.2.3.** [GitHub Releases](https://github.com/yunhyok/SPD-Scheduler/releases/latest)에서 Windows x64 설치 파일과 포터블 ZIP을 제공합니다. PowerDC 2025.1의 단일 보드 IR Drop에서는 영문 파일명으로 실행·결과 저장·종료를 확인했습니다. 시험 조건과 다른 모드의 검증 범위는 [검증 기록](docs/VALIDATION.md)에 정리했습니다.
 
 ## 사용법
 
@@ -77,7 +77,7 @@ dotnet run --project tests/SPDScheduler.Tests -c Release --no-build
 ./tools/Build.ps1
 ```
 
-`Build.ps1`은 테스트 후 런타임을 포함한 앱·상태 읽기 보조 EXE와 사용자 단위 설치파일을 만듭니다. 두 EXE는 각자 런타임을 포함하므로 설치 용량이 늘어납니다. `ISCC` 환경 변수 또는 PATH로 Inno Setup 컴파일러를 지정할 수 있습니다. 산출물은 `artifacts/installer`의 설치 EXE, SHA-256, `build-manifest.json`입니다. GitHub Actions도 같은 스크립트로 빌드하며 artifact를 제공합니다. CI에서 PowerSI/PowerDC를 실행하거나 정식 Release를 자동 게시하지 않습니다.
+`Build.ps1`은 테스트 후 런타임을 포함한 설치 EXE, 포터블 ZIP, 각 파일의 SHA-256과 `build-manifest.json`을 `artifacts/installer`에 생성합니다. `ISCC` 환경 변수 또는 PATH로 Inno Setup 컴파일러를 지정할 수 있습니다. GitHub Actions는 같은 스크립트로 빌드하고 설치·재설치를 검사합니다. 버전 태그를 푸시하면 검사를 통과한 파일이 GitHub Releases에 게시됩니다.
 
 시뮬레이션 실행이 차단된 UI 확인 방법:
 
@@ -108,6 +108,6 @@ dotnet run --project tests/SPDScheduler.Tests -c Release --no-build
 
 현재 설치파일은 코드 서명되지 않았습니다. PowerSI/PowerDC 및 Cadence 설치파일은 포함하지 않으며 Cadence와 독립적인 도구입니다.
 
-## Installer 0.2.2
+## 설치 경로
 
-The destination page is shown on fresh installs and reinstalls, with a Browse button for another drive or folder. New all-user installs default to Windows Program Files. Existing install mode, selected path and user settings are preserved. Choosing the current-user mode keeps its per-user default and needs no administrator rights.
+신규 설치와 재설치 모두 설치 경로를 표시합니다. **찾아보기**로 다른 드라이브나 폴더를 선택할 수 있습니다. 전체 사용자용 신규 설치의 기본 경로는 Windows의 `Program Files\SPD Scheduler`입니다. 현재 사용자용 설치는 관리자 권한 없이 가능하며, 재설치 시 이전 설치 모드와 경로를 사용합니다.

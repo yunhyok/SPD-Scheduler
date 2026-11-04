@@ -4,7 +4,7 @@ param([string]$DotnetPath)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$version = '0.2.2'
+$version = '0.2.3'
 if (-not $DotnetPath) {
     $bundledDotnet = Join-Path $repoRoot '.tools/dotnet/dotnet.exe'
     $DotnetPath = if (Test-Path -LiteralPath $bundledDotnet) { $bundledDotnet } else { 'dotnet' }
@@ -51,13 +51,17 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Installer compilation failed ($LASTEXITCODE)." }
 
     $installer = Join-Path $artifactsRoot "installer/SPD-Scheduler-Setup-$version.exe"
+    $portable = Join-Path (Split-Path $installer) "SPD-Scheduler-$version-win-x64.zip"
+    Compress-Archive -LiteralPath (Join-Path $publishDir 'SPDScheduler.exe'),$readerPath -DestinationPath $portable -Force
+    $portableHash = (Get-FileHash -LiteralPath $portable -Algorithm SHA256).Hash.ToLowerInvariant()
+    "$portableHash  $([IO.Path]::GetFileName($portable))" | Set-Content -LiteralPath "$portable.sha256" -Encoding ascii
     $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $([IO.Path]::GetFileName($installer))" | Set-Content -LiteralPath "$installer.sha256" -Encoding ascii
     $sourceCommit = (& git rev-parse HEAD)
     if ($LASTEXITCODE -ne 0) { $sourceCommit = 'uncommitted' }
     $dirty = @(& git status --porcelain --untracked-files=all)
     if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) { $sourceCommit = 'uncommitted' }
-    [ordered]@{ sourceCommit = $sourceCommit; version = $version; installerSha256 = $hash } |
+    [ordered]@{ sourceCommit = $sourceCommit; version = $version; installerSha256 = $hash; portableSha256 = $portableHash } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path (Split-Path $installer) 'build-manifest.json') -Encoding utf8
     Write-Host "Installer: $installer"
     Write-Host "SHA256: $hash"
