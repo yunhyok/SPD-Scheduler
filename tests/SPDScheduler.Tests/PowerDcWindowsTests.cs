@@ -18,6 +18,7 @@ internal static class PowerDcWindowsTests
         yield return Test("Active PowerDC blocks the shared launch gate", ActivePowerDcBlocks);
         yield return Test("PowerDC BbsCon children never inherit the PowerSI overlap exemption", PowerDcBbsBlocks);
         yield return ("Native PowerDC progress requires current-run open and begin markers", NativeProgressMarkers);
+        yield return ("PowerDC recognizes a short IR Drop run and rechecks its native log before saving", NativeIrDropCompletion);
         yield return ("A stale PowerDC Done pane cannot authorize saving", StaleDone);
         yield return ("Completion rules are isolated by the selected simulation tool", SelectedToolRules);
         yield return ("Fresh PowerDC completion rechecks status and waits for SAVED plus exit", FreshCompletion);
@@ -97,6 +98,12 @@ internal static class PowerDcWindowsTests
             }), CancellationToken.None])!;
         Check.That(snapshot.Complete && snapshot.Processes.Select(sample => sample.Identity.Pid).SequenceEqual(new[] { 100, 101, 200, 201, 202, 204 }),
             "Monitor both GUI roots and every validated descendant generation");
+        var gate = new IdleGate();
+        var settings = new AppSettings();
+        gate.Evaluate(snapshot, settings);
+        var blocked = gate.Evaluate(snapshot with { CapturedAt = snapshot.CapturedAt.AddMinutes(2) }, settings);
+        Check.That(!blocked.CanStart && blocked.Reason.Contains("PdcMesh.exe"),
+            "A PowerDC solver sleeping between Tcl steps blocks a new job even with constant counters");
     }
 
     private static void ActivePowerDcBlocks()
@@ -168,6 +175,40 @@ internal static class PowerDcWindowsTests
         Output(si, "Geometry processing ...\nGenerating FEM mesh ...");
         Check.Equal(RunStage.Starting, (await Inspect(Runner(() => null), si)).Stage, "Unprefixed DC progress cannot start an SI run");
         NoSave(si);
+    }
+
+    private static async Task NativeIrDropCompletion()
+    {
+        using var rig = new TestRig();
+        var job = Job(rig);
+        var runner = Runner(() => "Ver: 25.1.0.09191.616638 000 (Sigrity Power Integrity Suite)");
+        string directory = Directory.CreateDirectory(Path.Combine(job.Run!.DirectoryPath, "native")).FullName;
+        string path = Path.Combine(directory, "synthetic_SimulationStatus.log");
+        string stamp = Epoch.ToLocalTime().ToString("'['yyyy/MM/dd-HH:mm:ss']--'", System.Globalization.CultureInfo.InvariantCulture);
+        string started = stamp + "Geometry processing ... \r\n";
+        string saving = stamp + "Saving IR drop result ... \r\n";
+        string done = stamp + "Simulation completed \r\n";
+        File.WriteAllText(path, started + saving + done);
+        Markers(job, "OPENED", "BEGIN_REQUESTED");
+        Check.Equal(RunStage.Running, (await Inspect(runner, job)).Stage, "Wait for the GUI begin call to return");
+        Markers(job, "OPENED", "BEGIN_REQUESTED", "BEGIN_RETURNED");
+        foreach (string invalid in new[] { done, started + done, saving + done.TrimEnd(), saving + done + started,
+            saving + done + "Solver failed\n", (saving + done).Replace("2026/", "2025/") })
+        {
+            File.WriteAllText(path, invalid);
+            Check.That((await Inspect(runner, job)).Stage != RunStage.ReadyToSave, "Stale, partial or superseded records cannot save");
+            NoSave(job);
+        }
+        File.WriteAllText(path, started + saving + done);
+        Check.Equal(RunStage.ReadyToSave, (await Inspect(runner, job)).Stage, "A fresh terminal pair survives a missed GUI transition");
+        File.AppendAllText(path, started);
+        try { await runner.RequestSaveAndExitAsync(job, CancellationToken.None); }
+        catch (InvalidOperationException) { }
+        NoSave(job);
+        File.WriteAllText(path, started + saving + done);
+        Check.Equal(RunStage.ReadyToSave, (await Inspect(runner, job)).Stage, "Re-observe completion");
+        await runner.RequestSaveAndExitAsync(job, CancellationToken.None);
+        Check.That(File.Exists(Path.Combine(job.Run.DirectoryPath, "control.txt")), "Deliver save to the same run");
     }
 
     private static async Task StaleDone()

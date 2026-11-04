@@ -305,6 +305,7 @@ public sealed class SchedulerEngine
             try
             {
                 next.Run.Process = await _runner.LaunchAsync(next, Settings, cancellationToken);
+                _ownedObservationDetail = $"{next.Tool} 실행 확인 · PID {next.Run.Process.Pid} · 첫 해석 상태 확인 대기";
                 Save();
                 StatusText = next.Tool + " 시작 확인 중 · " + next.FileName;
             }
@@ -461,6 +462,11 @@ public sealed class SchedulerEngine
             foreach (var identity in identities.OrderBy(identity => identity.Pid))
             {
                 var sample = snapshot?.Processes.FirstOrDefault(process => process.Identity == identity);
+                if (snapshot != null && identity.StartedAt > snapshot.CapturedAt)
+                {
+                    lines.Add($"PID {identity.Pid} · {Path.GetFileName(identity.ImagePath)} · 직전 측정 후 시작됨");
+                    continue;
+                }
                 lines.Add(sample is null ? $"PID {identity.Pid} · 이번 관측에 없음{(snapshot?.Complete == true ? "" : " (종료 여부 확인 불가)")}" :
                     $"PID {identity.Pid} · {Path.GetFileName(identity.ImagePath)} · 부모 PID {sample.ParentPid} · 상태 {sample.Signal} · 접근 {(sample.Accessible ? "가능" : "불가")}\r\n  근거: {sample.Evidence ?? "없음"}");
             }

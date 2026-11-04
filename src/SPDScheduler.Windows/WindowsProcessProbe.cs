@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -75,16 +74,7 @@ public sealed class WindowsProcessProbe : IProcessProbe
             }
             finally { CloseHandle(handle); }
 
-            return SelectProcesses(rows, pid =>
-            {
-                using var process = Process.GetProcessById(pid);
-                var identity = ReadIdentity(process);
-                if (process.HasExited) return null;
-                if (!GetProcessIoCounters(process.Handle, out var io)) throw new IOException("Process I/O is unavailable.");
-                return new ProcessSample(identity, rows[pid].Parent,
-                    process.TotalProcessorTime.TotalSeconds, process.PrivateMemorySize64,
-                    checked(io.ReadBytes + io.WriteBytes + io.OtherBytes), OtherIoBytes: io.OtherBytes);
-            }, cancellationToken);
+            return SelectProcesses(rows, pid => ReadSample(pid, rows[pid].Parent), cancellationToken);
         }
     }
 
@@ -93,7 +83,7 @@ public sealed class WindowsProcessProbe : IProcessProbe
     {
         var read = new Dictionary<int, ProcessSample?>();
         var selected = new Dictionary<int, ProcessSample>();
-        bool complete = true;
+        string? error = null;
         foreach (var old in tracked.Values.ToArray())
         {
             if (!rows.ContainsKey(old.Pid)) { tracked.Remove(old.Pid); continue; }
@@ -120,20 +110,29 @@ public sealed class WindowsProcessProbe : IProcessProbe
             }
         } while (added);
         foreach (var sample in selected.Values) tracked[sample.Identity.Pid] = sample.Identity;
-        return new(DateTimeOffset.UtcNow, selected.Values.OrderBy(sample => sample.Identity.Pid).ToArray(), complete,
-            complete ? null : "A PowerSI/PowerDC process identity or resource counter could not be read.", LogicalProcessorCount: LogicalProcessorCount);
+        return new(DateTimeOffset.UtcNow, selected.Values.OrderBy(sample => sample.Identity.Pid).ToArray(), error == null,
+            error, LogicalProcessorCount: LogicalProcessorCount);
 
         ProcessSample? Read(int pid)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (read.TryGetValue(pid, out var cached)) return cached;
             ProcessSample? sample = null;
-            try { sample = readSample(pid); if (sample == null) tracked.Remove(pid); }
+            try
+            {
+                sample = readSample(pid);
+                if (sample == null) tracked.Remove(pid);
+                else if (Path.GetFileName(sample.Identity.ImagePath).Equals("PdcMesh.exe", StringComparison.OrdinalIgnoreCase) ||
+                    Path.GetFileName(sample.Identity.ImagePath).Equals("PdcSolver.exe", StringComparison.OrdinalIgnoreCase))
+                    sample = sample with { Signal = ProcessSignal.Running,
+                        Evidence = $"PowerDC 해석 대기 · {Path.GetFileName(sample.Identity.ImagePath)} (PID {pid}) 실행 중" };
+            }
             catch (ArgumentException) { tracked.Remove(pid); }
-            catch (InvalidOperationException) { complete = false; }
-            catch (System.ComponentModel.Win32Exception) { complete = false; }
-            catch (IOException) { complete = false; }
-            catch (OverflowException) { complete = false; }
+            catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or IOException or OverflowException)
+            {
+                error ??= $"프로세스 조회 대기 · {rows[pid].Name} (PID {pid}) · " +
+                    (ex is Win32Exception native ? $"Win32 {native.NativeErrorCode}: " : "") + ex.Message;
+            }
             read[pid] = sample;
             return sample;
         }
@@ -148,10 +147,43 @@ public sealed class WindowsProcessProbe : IProcessProbe
         Path.GetFileNameWithoutExtension(name).Equals("powersi", StringComparison.OrdinalIgnoreCase) ||
         Path.GetFileNameWithoutExtension(name).Equals("pwrsi", StringComparison.OrdinalIgnoreCase);
 
-    internal static ProcessIdentity ReadIdentity(Process process)
+    internal static bool IsWindowsErrorReporter(string path)
     {
-        var handle = process.SafeHandle;
-        return new(process.Id, ReadCreationTime(handle), ReadImagePath(handle));
+        if (!Path.IsPathFullyQualified(path)) return false;
+        string file = Path.GetFileName(path);
+        if (!file.Equals("WerFault.exe", StringComparison.OrdinalIgnoreCase) &&
+            !file.Equals("WerFaultSecure.exe", StringComparison.OrdinalIgnoreCase)) return false;
+        string? directory = Path.GetDirectoryName(path);
+        return string.Equals(directory, Environment.SystemDirectory, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(directory, Environment.GetFolderPath(Environment.SpecialFolder.SystemX86), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static ProcessSample? ReadSample(int pid, int parent)
+    {
+        // Process.Handle asks for full access, even when Windows permits reading all the required counters.
+        using var handle = OpenProcess(0x1000, false, pid);
+        if (handle.IsInvalid)
+        {
+            int error = Marshal.GetLastWin32Error();
+            if (error == 87) return null;
+            throw new Win32Exception(error);
+        }
+        try
+        {
+            string path = ReadImagePath(handle);
+            // Windows can attach a protected reporting subtree to a faulted GUI. Its work is not solver activity.
+            if (IsWindowsErrorReporter(path)) return null;
+            if (!GetProcessTimes(handle, out long created, out _, out long kernel, out long user) ||
+                !GetProcessIoCounters(handle, out var io) ||
+                !K32GetProcessMemoryInfo(handle, out var memory, (uint)Marshal.SizeOf<MemoryCounters>()))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            var identity = new ProcessIdentity(pid, new DateTimeOffset(DateTime.FromFileTimeUtc(created)), path);
+            if (!GetExitCodeProcess(handle, out uint exitCode)) throw new Win32Exception(Marshal.GetLastWin32Error());
+            if (exitCode != 259) return null;
+            return new(identity, parent, TimeSpan.FromTicks(kernel + user).TotalSeconds, checked((long)memory.PrivateUsage),
+                checked(io.ReadBytes + io.WriteBytes + io.OtherBytes), OtherIoBytes: io.OtherBytes);
+        }
+        catch (Win32Exception) when (GetExitCodeProcess(handle, out uint code) && code != 259) { return null; }
     }
 
     internal static bool SameIdentity(ProcessIdentity first, ProcessIdentity second) =>
@@ -241,9 +273,19 @@ public sealed class WindowsProcessProbe : IProcessProbe
         internal ulong ReadOperations, WriteOperations, OtherOperations, ReadBytes, WriteBytes, OtherBytes;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MemoryCounters
+    {
+        internal uint Size, PageFaultCount;
+        internal nuint PeakWorkingSet, WorkingSet, PeakPagedPool, PagedPool, PeakNonpagedPool, NonpagedPool,
+            Pagefile, PeakPagefile, PrivateUsage;
+    }
+
     [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern SafeProcessHandle OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, int pid);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(SafeProcessHandle handle, uint milliseconds);
+    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetExitCodeProcess(SafeProcessHandle handle, out uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetProcessTimes(SafeProcessHandle handle, out long creationTime, out long exitTime, out long kernelTime, out long userTime);
     [DllImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
@@ -255,5 +297,7 @@ public sealed class WindowsProcessProbe : IProcessProbe
     [return: MarshalAs(UnmanagedType.Bool)] private static extern bool Process32Next(IntPtr snapshot, ref ProcessEntry entry);
     [DllImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool CloseHandle(IntPtr handle);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetProcessIoCounters(IntPtr process, out IoCounters counters);
+    private static extern bool GetProcessIoCounters(SafeProcessHandle process, out IoCounters counters);
+    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool K32GetProcessMemoryInfo(SafeProcessHandle process, out MemoryCounters counters, uint size);
 }

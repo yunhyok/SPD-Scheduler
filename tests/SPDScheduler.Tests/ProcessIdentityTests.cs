@@ -14,8 +14,8 @@ internal static class ProcessIdentityTests
     private static readonly Func<ProcessIdentity, Func<bool>, Func<DateTimeOffset>, Func<string>, (bool Alive, bool Readable, string? Detail)> Evaluate =
         typeof(WindowsProcessProbe).GetMethod("EvaluateIdentity", BindingFlags.NonPublic | BindingFlags.Static)!
             .CreateDelegate<Func<ProcessIdentity, Func<bool>, Func<DateTimeOffset>, Func<string>, (bool, bool, string?)>>();
-    private static readonly Func<Process, ProcessIdentity> Read = typeof(WindowsProcessProbe)
-        .GetMethod("ReadIdentity", BindingFlags.NonPublic | BindingFlags.Static)!.CreateDelegate<Func<Process, ProcessIdentity>>();
+    private static readonly Func<int, int, ProcessSample?> Read = typeof(WindowsProcessProbe)
+        .GetMethod("ReadSample", BindingFlags.NonPublic | BindingFlags.Static)!.CreateDelegate<Func<int, int, ProcessSample?>>();
     private static readonly ProcessIdentity Synthetic = new(123, DateTimeOffset.UnixEpoch.AddDays(1), @"C:\SyntheticOnly\solver.exe");
 
     public static IEnumerable<(string Name, Func<Task> Test)> All()
@@ -33,7 +33,10 @@ internal static class ProcessIdentityTests
     private static void CurrentProcess()
     {
         using var process = Process.GetCurrentProcess();
-        var identity = Read(process);
+        var sample = Read(process.Id, 0)!;
+        Check.That(sample.PrivateBytes > 0 && sample.CpuSeconds >= 0 && sample.IoBytes >= sample.OtherIoBytes,
+            "Limited-query handle must return usable counters");
+        var identity = sample.Identity;
         Check.Equal(new DateTimeOffset(process.StartTime.ToUniversalTime()), identity.StartedAt, "Native and persisted .NET creation timestamps must agree");
         Check.Equal(Path.GetFullPath(Environment.ProcessPath!), identity.ImagePath, "Limited-query image path must match the test apphost");
         var current = State(identity);

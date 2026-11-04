@@ -34,6 +34,7 @@ public sealed class PowerSiRunner : IPowerSiRunner
         internal bool RuleChecked;
         internal bool RuleStarted;
         internal string? ObservedLog;
+        internal string? CompletedPowerDcLog;
     }
     private sealed record Freshness(Guid RunId, bool SawNonCompletedUi, bool Started, bool RuleStarted);
     public sealed record LogEvidence(bool Started, bool Completed, bool NewerStart, bool Blocked, bool Reliable);
@@ -67,7 +68,6 @@ public sealed class PowerSiRunner : IPowerSiRunner
         {
             WorkingDirectory = Path.GetDirectoryName(spd)!, UseShellExecute = false, CreateNoWindow = false
         };
-        // shortcut: GUI -tcl startup is unverified; validate it on a separately authorized PC.
         start.ArgumentList.Add("-tcl");
         start.ArgumentList.Add(script);
         // Native per-run log files survive scheduler exit without a redirected pipe dependency.
@@ -118,8 +118,11 @@ public sealed class PowerSiRunner : IPowerSiRunner
         }
         if (markers.Contains("SAVE_FAILED")) return new(RunStage.SaveFailed, "The simulation application rejected saving. The process is preserved.", alive, activity);
         if (markers.Contains("START_REJECTED"))
+        {
+            string reason = ReadTail(Path.Combine(run.DirectoryPath, "error.txt")).Trim();
             return new(state.Started || run.StartedObserved ? RunStage.RuntimeFailed : RunStage.StartFailed,
-                "The current-run Tcl command reported an error; see this run's error.txt.", alive, activity);
+                reason.Length == 0 ? "Tcl 시작 명령 실패 · 실행 폴더의 error.txt를 확인하세요." : reason[..Math.Min(reason.Length, 512)], alive, activity);
+        }
         if (markers.Contains("BEGIN_FAILED")) return new(RunStage.RuntimeFailed, "begin simulation failed; solver activity is uncertain and the process is preserved.", alive, activity);
         if (TokenMatches(run, "SAVE_EXIT", "control.txt")) return identitiesReadable
             ? new(RunStage.Saving, "Save/exit was requested; waiting for SAVED and process exit.", alive, activity) : PendingIdentity();
@@ -129,7 +132,9 @@ public sealed class PowerSiRunner : IPowerSiRunner
 
         string output = ReadTail(Path.Combine(run.DirectoryPath, "output.log"));
         bool beginRequested = markers.Contains("BEGIN_REQUESTED");
-        if (beginRequested && HasPreprocessingProgress(output, run.CreatedAt, job.Tool)) state.Started = true;
+        string dcLog = job.Tool == SimulationTool.PowerDC && beginRequested ? ReadPowerDcLog(job) : "";
+        if (beginRequested && (HasPreprocessingProgress(output, run.CreatedAt, job.Tool) ||
+            HasPreprocessingProgress(dcLog, run.CreatedAt, job.Tool))) state.Started = true;
         var status = await readStatus(run.Process, cancellationToken).ConfigureAwait(false);
         bool uiCompleted = false;
         var uiSignal = WindowsProcessProbe.ClassifyStatus(status);
@@ -166,7 +171,13 @@ public sealed class PowerSiRunner : IPowerSiRunner
             if (log.Reliable && log.Started) { state.RuleStarted = true; state.Started = true; }
         }
         state.CompletedViaUi = uiCompleted && log.Reliable && !log.NewerStart && !log.Blocked;
-        state.Completed = state.CompletedViaUi || log.Completed;
+        if (markers.Contains("BEGIN_RETURNED") && log.Reliable && !log.NewerStart && !log.Blocked &&
+            PowerDcIrDropCompleted(dcLog, run.CreatedAt))
+        {
+            state.Started = true;
+            state.CompletedPowerDcLog = dcLog;
+        }
+        state.Completed = state.CompletedViaUi || log.Completed || state.CompletedPowerDcLog != null;
         run.StartedObserved |= state.Started;
         await PersistEvidenceAsync(run, state, cancellationToken).ConfigureAwait(false);
         if (!identitiesReadable) return PendingIdentity();
@@ -175,7 +186,8 @@ public sealed class PowerSiRunner : IPowerSiRunner
             state.CompletionAt = DateTimeOffset.UtcNow;
             state.ObservedLog = output;
             await WriteTokenAsync(run, "COMPLETION_OBSERVED", "completion.txt", cancellationToken).ConfigureAwait(false);
-            return new(RunStage.ReadyToSave, "Fresh current-run completion evidence was observed.", true, activity);
+            return new(RunStage.ReadyToSave, state.CompletedPowerDcLog != null ?
+                "PowerDC 실행 로그에서 IR Drop 결과 기록과 해석 완료를 확인했습니다." : "Fresh current-run completion evidence was observed.", true, activity);
         }
         if (state.Started && !state.Completed && uiSignal == ProcessSignal.Completed)
             return new(RunStage.CompletionUnconfirmed,
@@ -216,11 +228,16 @@ public sealed class PowerSiRunner : IPowerSiRunner
             throw new InvalidOperationException("The completion status could not be confirmed immediately before saving.");
         }
         string output = ReadTail(Path.Combine(run.DirectoryPath, "output.log"));
+        if (state.CompletedPowerDcLog != null && ReadPowerDcLog(job) != state.CompletedPowerDcLog)
+        {
+            InvalidateCompletion(run, state);
+            throw new InvalidOperationException("PowerDC 해석 로그가 변경되어 저장 전 완료 상태를 다시 확인해야 합니다.");
+        }
         if (state.Rule != null)
         {
             var log = EvaluateLogEvidence(output, state.Rule, state.RuleStarted);
             if (!log.Reliable || log.NewerStart || log.Blocked ||
-                (!state.CompletedViaUi && (!log.Completed || output != state.ObservedLog)))
+                (!state.CompletedViaUi && state.CompletedPowerDcLog == null && (!log.Completed || output != state.ObservedLog)))
             {
                 InvalidateCompletion(run, state);
                 throw new InvalidOperationException("The current-run log changed or no longer confirms completion; observe it again before saving.");
@@ -306,17 +323,13 @@ public sealed class PowerSiRunner : IPowerSiRunner
     private static bool HasPreprocessingProgress(string output, DateTimeOffset createdAt, SimulationTool tool)
     {
         // Only current-run native preprocessing records establish start; arbitrary output and headers do not.
-        long earliest = createdAt.UtcTicks - createdAt.UtcTicks % TimeSpan.TicksPerSecond;
         foreach (string line in output.Split('\n', StringSplitOptions.TrimEntries))
         {
             // PowerDC also writes unprefixed progress to the new, run-specific output log.
             if (tool == SimulationTool.PowerDC && IsPowerDcProgress(line)) return true;
-            if (line.Length < 24 || line[0] != '[' || !line.AsSpan(20, 3).SequenceEqual("]--") ||
-                !DateTime.TryParseExact(line.AsSpan(1, 19), "yyyy/MM/dd-HH:mm:ss", CultureInfo.InvariantCulture,
-                    DateTimeStyles.AssumeLocal | DateTimeStyles.AdjustToUniversal, out var timestamp) || timestamp.Ticks < earliest)
-                continue;
-            if (tool == SimulationTool.PowerDC && IsPowerDcProgress(line[23..].Trim())) return true;
-            if (line[23..].Trim() is "Arranging Layout ..." or "Arranging Circuits ..." or
+            var message = CurrentLogMessage(line, createdAt);
+            if (tool == SimulationTool.PowerDC && IsPowerDcProgress(message)) return true;
+            if (message is "Arranging Layout ..." or "Arranging Circuits ..." or
                 "Processing Layout ..." or "Processing Circuits ..." or
                 "Arranging Layout - Shapes" or "Arranging Layout - Layers" or "Arranging Layout - Nodes" or
                 "Arranging Layout - Vias" or "Arranging Layout - Traces" or "Arranging Layout - Coupled Traces" or
@@ -327,7 +340,27 @@ public sealed class PowerSiRunner : IPowerSiRunner
         return false;
     }
 
-    private static bool IsPowerDcProgress(string line) => line is
+    private static string? CurrentLogMessage(string line, DateTimeOffset createdAt)
+    {
+        long earliest = createdAt.UtcTicks - createdAt.UtcTicks % TimeSpan.TicksPerSecond;
+        return line.Length >= 24 && line[0] == '[' && line.AsSpan(20, 3).SequenceEqual("]--") &&
+            DateTime.TryParseExact(line.AsSpan(1, 19), "yyyy/MM/dd-HH:mm:ss", CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeLocal | DateTimeStyles.AdjustToUniversal, out var timestamp) && timestamp.Ticks >= earliest
+            ? line[23..].Trim() : null;
+    }
+
+    private static string ReadPowerDcLog(JobItem job) => ReadTail(Path.Combine(job.Run!.DirectoryPath,
+        "native", Path.GetFileNameWithoutExtension(job.FilePath) + "_SimulationStatus.log"));
+
+    private static bool PowerDcIrDropCompleted(string log, DateTimeOffset createdAt)
+    {
+        if (!log.EndsWith('\n')) return false;
+        var lines = log.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return lines.Length >= 2 && CurrentLogMessage(lines[^2], createdAt) == "Saving IR drop result ..." &&
+            CurrentLogMessage(lines[^1], createdAt) == "Simulation completed";
+    }
+
+    private static bool IsPowerDcProgress(string? line) => line is
         "Arranging data for IR drop analysis ..." or "Geometry processing ..." or
         "Finding overlapped vias ..." or "Generating FEM mesh ...";
 
@@ -401,6 +434,7 @@ public sealed class PowerSiRunner : IPowerSiRunner
     {
         state.Completed = false;
         state.CompletedViaUi = false;
+        state.CompletedPowerDcLog = null;
         state.CompletionAt = null;
         state.ObservedLog = null;
         if (!string.IsNullOrWhiteSpace(run.DirectoryPath)) File.Delete(Path.Combine(run.DirectoryPath, "completion.txt"));
@@ -443,6 +477,16 @@ public sealed class PowerSiRunner : IPowerSiRunner
     {
         if (!Enum.IsDefined(tool)) throw new ArgumentException("지원하지 않는 실행 프로그램입니다.", nameof(tool));
         static string Encoded(string value) => Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
+        // PowerDC 25.1 posts its close request and returns an empty Tcl error. Unwind vwait so the GUI can exit.
+        string ExitCommand(string failure) => tool == SimulationTool.PowerDC
+            ? $$$"""
+                set ::scheduler_done 1
+                if {[catch {sigrity::exit -noSave {!}} message] && $message ne ""} {scheduler_error $message; scheduler_mark {{{failure}}}}
+                """
+            : $$$"""if {[catch {sigrity::exit -noSave {!}} message]} {scheduler_error $message; scheduler_mark {{{failure}}}}""";
+        string logOptions = tool == SimulationTool.PowerDC
+            ? "-caseOutputFolder $::scheduler_dir -OutputFolderTitle {native}"
+            : "-runtimeErrorLogName {runtime-errors.log}";
         return $$$"""
             set ::scheduler_id { {{{runId:N}}} }
             set ::scheduler_id [string trim $::scheduler_id]
@@ -486,28 +530,26 @@ public sealed class PowerSiRunner : IPowerSiRunner
                     }
                     """ : "")}}}
                     scheduler_mark SAVED
-                    if {[catch {sigrity::exit -noSave {!}} message]} {scheduler_error $message; scheduler_mark EXIT_FAILED}
+                    {{{ExitCommand("EXIT_FAILED")}}}
                     return
                 }
                 if {$command eq "ABORT_NO_SAVE $::scheduler_id" && $::scheduler_rejected} {
                     scheduler_mark EXIT_NO_SAVE_REQUESTED
-                    if {[catch {sigrity::exit -noSave {!}} message]} {
-                        scheduler_error $message
-                        scheduler_mark CLEANUP_FAILED
-                        return
-                    }
+                    {{{ExitCommand("CLEANUP_FAILED")}}}
                     return
                 }
                 after 500 scheduler_poll
             }
             set ::scheduler_rejected 0
             if {[catch {
+                set step "Could not open SPD: $::scheduler_spd"
                 sigrity::open document $::scheduler_spd {!}
-                sigrity::update option -caseLogFolder $::scheduler_dir -outputWindowLogName {output.log} -runtimeErrorLogName {runtime-errors.log} {!}
+                set step "Could not configure log folder: $::scheduler_dir"
+                sigrity::update option -caseLogFolder $::scheduler_dir -outputWindowLogName {output.log} {{{logOptions}}} {!}
                 scheduler_mark OPENED
             } message]} {
                 set ::scheduler_rejected 1
-                scheduler_error $message
+                scheduler_error "$step $message"
                 scheduler_mark START_REJECTED
             }
             if {!$::scheduler_rejected} {

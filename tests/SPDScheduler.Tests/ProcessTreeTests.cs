@@ -14,6 +14,7 @@ internal static class ProcessTreeTests
         yield return Test("Validated descendants include every generation", ValidDescendants);
         yield return Test("Tracked descendants survive parent exit but never PID reuse", TrackedOrphan);
         yield return Test("Unreadable roots and children keep the process snapshot incomplete", UnreadableCandidates);
+        yield return Test("Only system error reporters are omitted from PowerDC process trees", WindowsErrorReporting);
         yield return Test("A root name from a stale enumeration cannot adopt a reused PID", ReusedRoot);
         yield return Test("An exited candidate is removed without adopting its children", ExitedCandidate);
         yield return Test("Active status always overrides a stale completion label", MixedStatus);
@@ -87,12 +88,41 @@ internal static class ProcessTreeTests
             var snapshot = Select(new(), [root, child], pid =>
                 pid == unreadable ? throw new IOException("Synthetic unreadable process") : root);
             Check.That(!snapshot.Complete, "An unreadable root or reachable child must block launch");
+            Check.That(snapshot.Error?.Contains($"PID {unreadable}") == true && snapshot.Error.Contains("Synthetic unreadable process"),
+                "The operator can identify which process failed and why");
         }
         var probe = new WindowsProcessProbe();
         Select(probe, [root, child]);
         Check.That(!Select(probe, [child], _ => throw new IOException("Synthetic unreadable orphan")).Complete,
             "An unreadable known orphan must block launch");
         Check.Equal(child, Select(probe, [child]).Processes.Single(), "Temporary unreadability must preserve the known orphan identity");
+    }
+
+    private static void WindowsErrorReporting()
+    {
+        var method = typeof(WindowsProcessProbe).GetMethod("IsWindowsErrorReporter", BindingFlags.NonPublic | BindingFlags.Static)!;
+        bool Reporter(string path) => (bool)method.Invoke(null, [path])!;
+        var dc = Sample(100, 1, 10, "PowerDC.exe");
+        var wer = Sample(101, 100, 11, Path.Combine(Environment.SystemDirectory, "WerFault.exe"));
+        var diagnostic = Sample(102, 101, 12, "protected.exe");
+        var solver = Sample(103, 100, 13, @"C:\Cadence\WerFault.exe");
+        ProcessSample[] all = [dc, wer, diagnostic, solver];
+        var snapshot = Select(new(), all, pid =>
+        {
+            if (pid == 102) throw new UnauthorizedAccessException("No access to the reporting subtree");
+            var sample = all.Single(item => item.Identity.Pid == pid);
+            return Reporter(sample.Identity.ImagePath) ? null : sample;
+        });
+        Check.That(Reporter(Path.Combine(Environment.SystemDirectory, "WerFaultSecure.exe")) &&
+            snapshot.Complete && snapshot.Processes.SequenceEqual(new[] { dc, solver }),
+            "The GUI and non-system lookalike remain monitored, including when a report's own children are protected");
+        var gate = new IdleGate();
+        var settings = new AppSettings();
+        Check.That(!gate.Evaluate(snapshot, settings).CanStart, "An open external GUI still needs the full idle interval");
+        var quiet = snapshot with { CapturedAt = snapshot.CapturedAt.AddSeconds(settings.IdleSeconds) };
+        Check.That(gate.Evaluate(quiet, settings).CanStart &&
+            gate.Confirm(quiet with { CapturedAt = quiet.CapturedAt.AddMilliseconds(1) }, settings).CanStart,
+            "Error reporting alone must not block launch after verified idle and a final recheck");
     }
 
     private static void ReusedRoot()
