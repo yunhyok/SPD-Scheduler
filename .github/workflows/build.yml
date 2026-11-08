@@ -26,10 +26,10 @@ jobs:
         run: ./tools/Build.ps1
       - name: Verify custom destination and reinstall
         shell: pwsh
-        run: ./scripts/test-installer-path.ps1 -Installer artifacts/installer/SPD-Scheduler-Setup-0.2.3.exe
+        run: ./scripts/test-installer-path.ps1 -Installer artifacts/installer/SPD-Scheduler-Setup-0.2.4.exe
       - uses: actions/upload-artifact@v4
         with:
-          name: SPD-Scheduler-Setup-0.2.3
+          name: SPD-Scheduler-Setup-0.2.4
           path: artifacts/installer/*
           if-no-files-found: error
 
@@ -39,5 +39,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF_NAME -cne 'v0.2.3') { throw 'Tag must match the package version.' }
-          ./tools/Publish-Release.ps1 -InstallerPath artifacts/installer/SPD-Scheduler-Setup-0.2.3.exe -NotesPath docs/releases/v0.2.3.md
+          if ($env:GITHUB_REF_NAME -cne 'v0.2.4') { throw 'Tag must match the package version.' }
+          ./tools/Publish-Release.ps1 -InstallerPath artifacts/installer/SPD-Scheduler-Setup-0.2.4.exe -NotesPath docs/releases/v0.2.4.md
