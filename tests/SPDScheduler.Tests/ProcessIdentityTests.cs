@@ -104,6 +104,12 @@ internal static class ProcessIdentityTests
         var restricted = new RawSecurityDescriptor("D:(D;;0x100000;;;WD)(A;;0x1000;;;WD)");
         var descriptor = new byte[restricted.BinaryLength];
         restricted.GetBinaryForm(descriptor, 0);
+        Check.That(OpenProcessToken(new IntPtr(-1), 0x28, out var token), "Open this test process privilege token");
+        using var ownedToken = token;
+        Check.That(LookupPrivilegeValue(null, "SeDebugPrivilege", out var debug), "Find the privilege that can bypass process DACLs");
+        var disabledDebug = new TokenPrivilege { Count = 1, Luid = debug };
+        Check.That(AdjustTokenPrivileges(token, false, ref disabledDebug, Marshal.SizeOf<TokenPrivilege>(), out var previousDebug, out _),
+            "Disable debug privilege for the access-denied reproduction");
         try
         {
             Check.That(SetKernelObjectSecurity(handle, 4, descriptor), "Restrict only this test process");
@@ -116,7 +122,13 @@ internal static class ProcessIdentityTests
         }
         finally
         {
-            Check.That(SetKernelObjectSecurity(handle, 4, original), "Restore the original test process DACL");
+            try { Check.That(SetKernelObjectSecurity(handle, 4, original), "Restore the original test process DACL"); }
+            finally
+            {
+                if (previousDebug.Count != 0)
+                    Check.That(AdjustTokenPrivileges(token, false, ref previousDebug, Marshal.SizeOf<TokenPrivilege>(), out _, out _),
+                        "Restore the test process debug privilege");
+            }
         }
     }
 
@@ -139,4 +151,15 @@ internal static class ProcessIdentityTests
     private static extern bool GetKernelObjectSecurity(SafeProcessHandle handle, uint info, byte[]? descriptor, uint size, out uint needed);
     [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetKernelObjectSecurity(SafeProcessHandle handle, uint info, byte[] descriptor);
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Luid { public uint Low; public int High; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TokenPrivilege { public uint Count; public Luid Luid; public uint Attributes; }
+    [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool OpenProcessToken(IntPtr process, uint access, out SafeAccessTokenHandle token);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool LookupPrivilegeValue(string? system, string name, out Luid luid);
+    [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AdjustTokenPrivileges(SafeAccessTokenHandle token, [MarshalAs(UnmanagedType.Bool)] bool disableAll,
+        ref TokenPrivilege state, int length, out TokenPrivilege previous, out int required);
 }

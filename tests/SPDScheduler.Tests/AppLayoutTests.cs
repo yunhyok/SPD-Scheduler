@@ -48,6 +48,7 @@ internal static class AppLayoutTests
             var buttons = controls.OfType<Button>().ToArray();
             var add = buttons.Single(button => button.Text == "파일 추가");
             var monitoring = buttons.Single(button => button.Text == "감시 상세");
+            var toolbar = (FlowLayoutPanel)add.Parent!;
             Check.Equal(10, buttons.Length, "Main window should retain all action buttons");
             Check.Equal(4, grid.Columns.Count, "Main window should retain all queue columns");
             Check.Equal("연동 안내", controls.OfType<LinkLabel>().Single().Text, "Main window should retain its help link");
@@ -73,7 +74,11 @@ internal static class AppLayoutTests
                     $"{scale:P0} scale at {size}: grid columns need {columnsWidth}px, grid is {grid.ClientSize.Width}px wide");
                 Check.That(grid.Height >= grid.ColumnHeadersHeight + 3 * grid.RowTemplate.Height,
                     $"{scale:P0} scale at {size}: queue is {grid.Height}px tall with {grid.ColumnHeadersHeight}px headers and {grid.RowTemplate.Height}px rows");
-                if (size == wide) Check.Equal(add.Top, monitoring.Top, "Toolbar should restore one row at a wide size");
+                // Windows can limit the requested form width to the desktop's maximum window size.
+                int availableWidth = toolbar.ClientSize.Width - toolbar.Padding.Horizontal;
+                int requiredWidth = toolbar.Controls.Cast<Control>().Sum(button => button.Width + button.Margin.Horizontal);
+                Check.Equal(requiredWidth <= availableWidth, add.Top == monitoring.Top,
+                    $"{scale:P0} scale at {form.Size}: toolbar needs {requiredWidth}px for one row and has {availableWidth}px");
                 if (size == form.MinimumSize)
                     Check.That(monitoring.Top > add.Top, "Toolbar should wrap at the minimum width");
             }
