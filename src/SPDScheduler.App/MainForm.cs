@@ -4,16 +4,22 @@ namespace SPDScheduler.App;
 
 internal sealed class MainForm : Form
 {
+    internal static readonly Color PanelColor = Color.FromArgb(0x2b, 0x2e, 0x34);
+    internal static readonly Color TextColor = Color.FromArgb(0xec, 0xee, 0xf1);
+    internal static readonly Color BorderColor = Color.FromArgb(0x53, 0x59, 0x64);
+    internal static readonly Color FocusColor = Color.FromArgb(0x8f, 0xc1, 0xff);
+    private static readonly Color MutedTextColor = Color.FromArgb(0xb9, 0xc0, 0xca);
+    private static readonly Color EditorColor = Color.FromArgb(0x15, 0x18, 0x1d);
     private readonly SchedulerEngine engine;
     private readonly bool safeMode;
     private readonly Func<Action, Task> command;
     private readonly string dataDirectory;
     private readonly QueueGrid grid = new() { Dock = DockStyle.Fill };
-    private readonly Label status = new() { AutoSize = true, ForeColor = Color.FromArgb(72, 85, 101), Margin = new Padding(0, 7, 0, 0) };
+    private readonly Label status = new() { Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, Margin = Padding.Empty };
     private readonly Button start;
     private readonly Button pause;
     private readonly Button checkNow;
-    private readonly Label checkTiming = new() { AutoSize = true, Anchor = AnchorStyles.Left, ForeColor = Color.DimGray, Margin = Padding.Empty };
+    private readonly Label checkTiming = new() { AutoSize = true, Anchor = AnchorStyles.Left, ForeColor = MutedTextColor, Margin = Padding.Empty };
     private string queueSignature = "";
     private bool closeForExit;
 
@@ -23,29 +29,33 @@ internal sealed class MainForm : Form
         this.safeMode = safeMode;
         this.command = command;
         this.dataDirectory = dataDirectory;
+        SuspendLayout();
         Text = "SPD Scheduler " + Application.ProductVersion.Split('+')[0] + (safeMode ? " · 안전 모드" : "");
         Font = new Font("맑은 고딕", 9F);
         ClientSize = new Size(744, 490);
-        MinimumSize = new Size(720, 478);
+        MinimumSize = new Size(570, 440);
         StartPosition = FormStartPosition.CenterScreen;
+        AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
-        BackColor = Color.FromArgb(246, 248, 251);
+        BackColor = Color.FromArgb(0x20, 0x22, 0x26);
+        ForeColor = TextColor;
         Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
         KeyPreview = true;
         AllowDrop = true;
 
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20, 16, 20, 12), ColumnCount = 1, RowCount = 6 };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 29));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 41));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         Controls.Add(layout);
         var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        var title = new Label { Text = "SPD Scheduler", Font = new Font(Font.FontFamily, 17F, FontStyle.Bold), AutoSize = true, ForeColor = Color.FromArgb(28, 45, 66), Margin = Padding.Empty };
+        var title = new Label { Text = "SPD Scheduler", Font = new Font(Font.FontFamily, 17F, FontStyle.Bold), AutoSize = true, Margin = Padding.Empty };
         header.Controls.Add(title);
         var execution = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
         start = MakeButton("시작", async () => { await command(engine.Start); if (engine.IsArmed) await checkNow(); }, true);
@@ -54,7 +64,7 @@ internal sealed class MainForm : Form
         header.Controls.Add(execution);
         layout.Controls.Add(header, 0, 0);
 
-        var tools = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty };
+        var tools = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0, 0, 0, 4) };
         tools.Controls.Add(MakeButton("파일 추가", AddFilesAsync));
         tools.Controls.Add(MakeButton("제거", () => ReconcileSelectionAsync(remove: true)));
         tools.Controls.Add(MakeButton("예약", ScheduleAsync));
@@ -70,14 +80,14 @@ internal sealed class MainForm : Form
                 StartPosition = FormStartPosition.CenterParent, Font = Font, MinimizeBox = false, ShowInTaskbar = false };
             detail.Controls.Add(new TextBox { Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
                 ScrollBars = ScrollBars.Both, WordWrap = false, Text = engine.MonitoringDetails,
-                AccessibleName = "PowerSI/PowerDC 감시 상세 (Ctrl+A, Ctrl+C로 복사)", BackColor = Color.White });
+                AccessibleName = "PowerSI/PowerDC 감시 상세 (Ctrl+A, Ctrl+C로 복사)", BackColor = EditorColor, ForeColor = TextColor });
             detail.ShowDialog(this);
             return Task.CompletedTask;
         }));
         layout.Controls.Add(tools, 0, 1);
         layout.Controls.Add(grid, 0, 2);
         layout.Controls.Add(status, 0, 3);
-        var checks = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2, Margin = new Padding(0, 0, 0, 5) };
+        var checks = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2, Margin = new Padding(0, 0, 0, 5) };
         checks.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         checks.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         checks.Controls.Add(checkTiming);
@@ -85,11 +95,11 @@ internal sealed class MainForm : Form
         this.checkNow.Margin = Padding.Empty;
         checks.Controls.Add(this.checkNow);
         layout.Controls.Add(checks, 0, 4);
-        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
+        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2, Margin = Padding.Empty };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        footer.Controls.Add(new Label { Text = safeMode ? "안전 모드 · PowerSI/PowerDC 실행과 제어 차단 · 기본 PowerSI" : ".spd 추가 시 기본 PowerSI · 대기 작업 우클릭 → 실행 프로그램 변경\n창을 닫아도 트레이에서 계속 실행됩니다", AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding(0, 4, 0, 0) });
-        var help = new LinkLabel { Text = "연동 안내", AutoSize = true, Margin = new Padding(4, 4, 0, 0), LinkColor = Color.FromArgb(40, 93, 171) };
+        footer.Controls.Add(new Label { Text = safeMode ? "안전 모드 · PowerSI/PowerDC 실행과 제어 차단 · 기본 PowerSI" : ".spd 추가 시 기본 PowerSI · 대기 작업 우클릭 → 실행 프로그램 변경\n창을 닫아도 트레이에서 계속 실행됩니다", AutoSize = true, ForeColor = MutedTextColor, Margin = new Padding(0, 4, 0, 0) });
+        var help = new LinkLabel { Text = "연동 안내", AutoSize = true, Margin = new Padding(4, 4, 0, 0), LinkColor = FocusColor, ActiveLinkColor = TextColor };
         help.LinkClicked += (_, _) => ShowIntegrationHelp();
         footer.Controls.Add(help);
         layout.Controls.Add(footer, 0, 5);
@@ -117,7 +127,7 @@ internal sealed class MainForm : Form
             Guid[] selected = SelectedIds().ToArray();
             JobItem[] selectedJobs = engine.Jobs.Where(j => selected.Contains(j.Id)).ToArray();
             manualComplete.Enabled = selected.Length > 0 && selectedJobs.Length == selected.Length &&
-                selectedJobs.All(j => j.Status is JobStatus.NeedsAttention or JobStatus.Failed);
+                selectedJobs.All(j => j.Status is JobStatus.Running or JobStatus.NeedsAttention or JobStatus.Failed);
             executionTool.Enabled = selected.Length > 0 && selectedJobs.Length == selected.Length &&
                 selectedJobs.All(j => j.Status == JobStatus.Queued);
             foreach (ToolStripMenuItem item in executionTool.DropDownItems)
@@ -184,13 +194,25 @@ internal sealed class MainForm : Form
             else if (e.KeyCode == Keys.F2) { e.SuppressKeyPress = true; await ScheduleAsync(); }
             else if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; Hide(); }
         };
+        ResumeLayout();
         RefreshQueue();
     }
 
     private Button MakeButton(string text, Func<Task> action, bool primary = false)
     {
-        var button = new Button { Text = text, AutoSize = true, MinimumSize = new Size(68, 31), Height = 31, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 0, 6, 0), Padding = new Padding(7, 0, 7, 0), BackColor = primary ? Color.FromArgb(38, 89, 159) : Color.White, ForeColor = primary ? Color.White : Color.FromArgb(39, 52, 67), AccessibleName = text };
-        button.FlatAppearance.BorderColor = primary ? button.BackColor : Color.FromArgb(207, 215, 225);
+        var button = new Button { Text = text, AutoSize = true, MinimumSize = new Size(68, 31), Height = 31, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 0, 6, 6), Padding = new Padding(7, 0, 7, 0), BackColor = primary ? Color.FromArgb(0x38, 0x6c, 0xb0) : PanelColor, ForeColor = primary ? Color.White : TextColor, AccessibleName = text };
+        Color border = primary ? button.BackColor : BorderColor;
+        button.FlatAppearance.BorderColor = border;
+        button.GotFocus += (_, _) => button.FlatAppearance.BorderColor = FocusColor;
+        button.LostFocus += (_, _) => button.FlatAppearance.BorderColor = border;
+        button.Paint += (_, e) =>
+        {
+            if (button.Enabled) return;
+            using var background = new SolidBrush(PanelColor);
+            e.Graphics.FillRectangle(background, Rectangle.Inflate(button.ClientRectangle, -1, -1));
+            TextRenderer.DrawText(e.Graphics, button.Text, button.Font, button.ClientRectangle, MutedTextColor,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+        };
         button.Click += async (_, _) => { try { await action(); } catch (Exception ex) { ShowError(ex.Message); } };
         return button;
     }
@@ -236,10 +258,10 @@ internal sealed class MainForm : Form
             row.Selected = selected.Contains(job.Id);
             row.Cells[1].Style.ForeColor = job.Status switch
             {
-                JobStatus.Completed => Color.FromArgb(25, 119, 76),
-                JobStatus.Failed or JobStatus.NeedsAttention => Color.FromArgb(174, 62, 45),
-                JobStatus.Starting or JobStatus.Running or JobStatus.Saving => Color.FromArgb(38, 89, 159),
-                _ => Color.FromArgb(87, 98, 112)
+                JobStatus.Completed => Color.FromArgb(143, 218, 170),
+                JobStatus.Failed or JobStatus.NeedsAttention => Color.FromArgb(255, 172, 158),
+                JobStatus.Starting or JobStatus.Running or JobStatus.Saving => FocusColor,
+                _ => MutedTextColor
             };
         }
         if (scroll >= 0 && grid.Rows.Count > 0) grid.FirstDisplayedScrollingRowIndex = Math.Min(scroll, grid.Rows.Count - 1);
@@ -277,7 +299,7 @@ internal sealed class MainForm : Form
             StartPosition = FormStartPosition.CenterParent, Font = Font, MinimizeBox = false, ShowInTaskbar = false };
         detail.Controls.Add(new TextBox { Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
             ScrollBars = ScrollBars.Both, WordWrap = false, Text = text,
-            AccessibleName = "작업 상세 (Ctrl+A, Ctrl+C로 복사)", BackColor = Color.White });
+            AccessibleName = "작업 상세 (Ctrl+A, Ctrl+C로 복사)", BackColor = EditorColor, ForeColor = TextColor });
         detail.ShowDialog(this);
     }
 
@@ -294,14 +316,14 @@ internal sealed class MainForm : Form
         var selected = engine.Jobs.Where(j => ids.Contains(j.Id))
             .Select(j => (j.Id, RunId: j.Run?.Id, j.FileName, j.Status)).ToArray();
         if (selected.Length == 0) return;
-        if (selected.Any(j => j.Status is JobStatus.Starting or JobStatus.Running or JobStatus.Saving))
-        { ShowError("시작·실행·저장 중인 작업은 수동 완료하거나 제거할 수 없습니다."); return; }
-        if (!remove && selected.Any(j => j.Status is not (JobStatus.NeedsAttention or JobStatus.Failed)))
-        { ShowError("확인 필요 또는 실패 작업만 수동 완료할 수 있습니다."); return; }
-        var manual = selected.Where(j => !remove || j.Status == JobStatus.NeedsAttention).ToArray();
+        if (selected.Any(j => j.Status is JobStatus.Starting or JobStatus.Saving))
+        { ShowError("시작·저장 중인 작업은 수동 완료하거나 제거할 수 없습니다."); return; }
+        if (!remove && selected.Any(j => j.Status is not (JobStatus.Running or JobStatus.NeedsAttention or JobStatus.Failed)))
+        { ShowError("실행 중, 확인 필요 또는 실패 작업만 수동 완료할 수 있습니다."); return; }
+        var manual = selected.Where(j => !remove || j.Status is JobStatus.Running or JobStatus.NeedsAttention).ToArray();
         if (manual.Length > 0)
         {
-            string action = remove ? "확인 필요 작업 제거" : "수동 완료 처리";
+            string action = remove ? "작업 수동 제거" : "수동 완료 처리";
             string instruction = remove
                 ? "PowerSI/PowerDC 상태와 결과 저장 여부를 직접 확인한 뒤 목록에서 제거하세요."
                 : "시뮬레이션 완료와 결과 저장을 직접 확인한 작업만 수동 완료 처리하세요.";
@@ -323,7 +345,7 @@ internal sealed class MainForm : Form
         await command(() =>
         {
             foreach (var job in selected)
-                if (!remove || job.Status == JobStatus.NeedsAttention) engine.ResolveManually(job.Id, job.RunId, remove);
+                if (!remove || job.Status is JobStatus.Running or JobStatus.NeedsAttention) engine.ResolveManually(job.Id, job.RunId, remove);
                 else engine.Remove(job.Id);
         });
     }
@@ -405,9 +427,9 @@ internal sealed class QueueGrid : DataGridView
     public QueueGrid()
     {
         DoubleBuffered = true;
-        BackgroundColor = Color.White;
+        BackgroundColor = Color.FromArgb(0x1d, 0x20, 0x25);
         BorderStyle = BorderStyle.FixedSingle;
-        GridColor = Color.FromArgb(233, 237, 243);
+        GridColor = MainForm.BorderColor;
         ReadOnly = true;
         MultiSelect = true;
         SelectionMode = DataGridViewSelectionMode.FullRowSelect;
@@ -419,8 +441,9 @@ internal sealed class QueueGrid : DataGridView
         ScrollBars = ScrollBars.Vertical;
         ClipboardCopyMode = DataGridViewClipboardCopyMode.Disable;
         EnableHeadersVisualStyles = false;
-        ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle { BackColor = Color.FromArgb(238, 242, 247), ForeColor = Color.FromArgb(59, 73, 91), Padding = new Padding(7, 0, 0, 0), SelectionBackColor = Color.FromArgb(238, 242, 247) };
-        DefaultCellStyle = new DataGridViewCellStyle { BackColor = Color.White, ForeColor = Color.FromArgb(34, 46, 61), SelectionBackColor = Color.FromArgb(224, 235, 252), SelectionForeColor = Color.FromArgb(26, 57, 101), Padding = new Padding(7, 0, 5, 0), WrapMode = DataGridViewTriState.False };
+        ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.Single;
+        ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle { BackColor = MainForm.PanelColor, ForeColor = MainForm.TextColor, Padding = new Padding(7, 0, 0, 0), SelectionBackColor = MainForm.PanelColor, SelectionForeColor = MainForm.TextColor };
+        DefaultCellStyle = new DataGridViewCellStyle { BackColor = BackgroundColor, ForeColor = MainForm.TextColor, SelectionBackColor = Color.FromArgb(0x29, 0x4e, 0x7c), SelectionForeColor = Color.White, Padding = new Padding(7, 0, 5, 0), WrapMode = DataGridViewTriState.False };
         ColumnHeadersHeight = 34;
         ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
         RowTemplate.Height = 34;

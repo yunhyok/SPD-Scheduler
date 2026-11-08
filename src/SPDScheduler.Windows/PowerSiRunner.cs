@@ -273,8 +273,16 @@ public sealed class PowerSiRunner : IPowerSiRunner
         run.Process != null && WindowsProcessProbe.SameIdentity(run.Process, identity) ||
         run.Children.Any(child => WindowsProcessProbe.SameIdentity(child, identity));
 
-    private static void RefreshChildren(RunRecord run, ProcessSnapshot snapshot)
+    private void RefreshChildren(RunRecord run, ProcessSnapshot snapshot)
     {
+        // Retire proven exits before Windows reuses their PIDs; absence from a filtered snapshot alone is insufficient.
+        run.Children.RemoveAll(child =>
+        {
+            var current = snapshot.Processes.FirstOrDefault(sample => sample.Identity.Pid == child.Pid && sample.Accessible);
+            if (current != null) return !WindowsProcessProbe.SameIdentity(child, current.Identity);
+            var state = identityState(child);
+            return state.Readable && !state.Alive;
+        });
         bool changed;
         do
         {

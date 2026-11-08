@@ -1,6 +1,9 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using Microsoft.Win32.SafeHandles;
 using SPDScheduler.Core;
 using SPDScheduler.Windows;
 
@@ -25,6 +28,8 @@ internal static class ProcessIdentityTests
         yield return Test("A reused PID is rejected before querying its inaccessible image", ReusedProcess);
         yield return Test("Exit racing image reads is resolved only when exit is proven", ExitedDuringRead);
         yield return Test("Unreadable live identities retain native errors and block progress", UnreadableProcess);
+        yield return Test("Identity remains readable when Windows denies SYNCHRONIZE but allows limited query", LimitedQueryAccess);
+        yield return Test("Exit code 259 is not mistaken for a live process when waiting is allowed", StillActiveExitCode);
     }
 
     private static (string, Func<Task>) Test(string name, Action action) =>
@@ -86,4 +91,52 @@ internal static class ProcessIdentityTests
         var wait = Evaluate(Synthetic, () => throw new Win32Exception(5), () => Synthetic.StartedAt, () => Synthetic.ImagePath);
         Check.That(!wait.Readable && wait.Detail!.Contains("exit state"), "Failure to read the exit state must stay unknown");
     }
+
+    private static void LimitedQueryAccess()
+    {
+        using var process = Process.GetCurrentProcess();
+        var identity = Read(process.Id, 0)!.Identity;
+        using var handle = OpenProcess(0x60000, false, process.Id); // Preserve a READ_CONTROL/WRITE_DAC handle before restricting this test process.
+        Check.That(!handle.IsInvalid, "Test process security must be readable and restorable");
+        GetKernelObjectSecurity(handle, 4, null, 0, out uint needed);
+        var original = new byte[needed];
+        Check.That(GetKernelObjectSecurity(handle, 4, original, needed, out _), "Back up the test process DACL");
+        var restricted = new RawSecurityDescriptor("D:(D;;0x100000;;;WD)(A;;0x1000;;;WD)");
+        var descriptor = new byte[restricted.BinaryLength];
+        restricted.GetBinaryForm(descriptor, 0);
+        try
+        {
+            Check.That(SetKernelObjectSecurity(handle, 4, descriptor), "Restrict only this test process");
+            using var denied = OpenProcess(0x101000, false, process.Id);
+            Check.That(denied.IsInvalid && Marshal.GetLastWin32Error() == 5, "Reproduce the former OpenProcess access-denied request");
+            var state = State(identity);
+            Check.That(state.Alive && state.Readable, "Limited query access must still verify the exact live identity");
+            var reused = State(identity with { StartedAt = identity.StartedAt.AddTicks(-1) });
+            Check.That(!reused.Alive && reused.Readable, "Reject the retired identity even when synchronization access is denied");
+        }
+        finally
+        {
+            Check.That(SetKernelObjectSecurity(handle, 4, original), "Restore the original test process DACL");
+        }
+    }
+
+    private static void StillActiveExitCode()
+    {
+        var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"))
+        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true };
+        using var process = Process.Start(start)!;
+        var identity = Read(process.Id, 0)!.Identity;
+        process.StandardInput.WriteLine("exit 259");
+        Check.That(process.WaitForExit(5_000), "Synthetic process must exit promptly");
+        Check.Equal(259, process.ExitCode, "Exercise the reserved STILL_ACTIVE value as an actual exit code");
+        var state = State(identity);
+        Check.That(!state.Alive && state.Readable, "A signaled process is exited regardless of its exit code");
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern SafeProcessHandle OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, int pid);
+    [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetKernelObjectSecurity(SafeProcessHandle handle, uint info, byte[]? descriptor, uint size, out uint needed);
+    [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetKernelObjectSecurity(SafeProcessHandle handle, uint info, byte[] descriptor);
 }

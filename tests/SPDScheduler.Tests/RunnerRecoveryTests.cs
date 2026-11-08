@@ -18,6 +18,9 @@ internal static class RunnerRecoveryTests
         yield return ("Unreadable root defers observation without authorizing stale GUI completion", RootIdentityRecovery);
         yield return ("Saved run waits for an unreadable child identity to resolve", SavedWithUnreadableChild);
         yield return ("Transient identity failure immediately before save keeps the queue armed", SaveIdentityRecovery);
+        yield return ("Exited children are retired before inaccessible PID reuse can block completion", RetiredChildCompletion);
+        yield return ("Persisted children with proven PID replacements cannot block cleanup", ReusedChildCleanup);
+        yield return ("Live orphaned children survive reconciliation after restart", LiveOrphanRecovery);
     }
 
     private static JobItem Job(TestRig rig)
@@ -40,6 +43,72 @@ internal static class RunnerRecoveryTests
         Func<ProcessIdentity, CancellationToken, Task<string?>> status) => (PowerSiRunner)Activator.CreateInstance(
             typeof(PowerSiRunner), System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
             null, [identity, status], null)!;
+
+    private static async Task RetiredChildCompletion()
+    {
+        using var rig = new TestRig();
+        var job = Job(rig);
+        var run = job.Run!;
+        var child = new ProcessIdentity(12312, rig.Clock.Now, @"C:\SyntheticOnly\S600.exe");
+        run.Children.Add(child);
+        File.WriteAllText(Path.Combine(run.DirectoryPath, "events.log"), $"{run.Id:N} OPENED\n{run.Id:N} BEGIN_REQUESTED\n");
+        bool retired = false, rootAlive = true;
+        string status = "Simulation running";
+        var runner = Runner(identity =>
+        {
+            if (identity == child)
+            {
+                Check.That(!retired, "A retired child must never be queried after its PID is reused");
+                return (false, true, null);
+            }
+            return (rootAlive, true, null);
+        }, (_, _) => Task.FromResult<string?>(status));
+        var snapshot = new ProcessSnapshot(rig.Clock.Now, [new ProcessSample(run.Process!, 0, 0, 0, 0)]);
+        Check.Equal(RunStage.Running, (await runner.InspectAsync(job, new(), snapshot, CancellationToken.None)).Stage,
+            "Current-run start evidence must be retained while exited children are removed");
+        Check.Equal(0, run.Children.Count, "Confirmed exited descendants must not accumulate");
+        retired = true;
+        status = "Simulation Done.";
+        Check.Equal(RunStage.ReadyToSave, (await runner.InspectAsync(job, new(), snapshot, CancellationToken.None)).Stage,
+            "PID reuse after a confirmed exit must not obstruct fresh completion");
+        await runner.RequestSaveAndExitAsync(job, CancellationToken.None);
+        Marker(job, "SAVED");
+        rootAlive = false;
+        Check.Equal(RunStage.Succeeded, (await runner.InspectAsync(job, new(), snapshot with { Processes = [] }, CancellationToken.None)).Stage,
+            "Saved run must finish once its actual root exits");
+    }
+
+    private static async Task ReusedChildCleanup()
+    {
+        using var rig = new TestRig();
+        var job = Job(rig);
+        var child = new ProcessIdentity(23640, rig.Clock.Now, @"C:\SyntheticOnly\S600.exe");
+        job.Run!.Children.Add(child);
+        job.Run.DirectoryPath = Path.Combine(rig.Store.DataDirectory, "runs", job.Run.Id.ToString("N"));
+        await rig.InitializeAsync(new QueueDocument { Jobs = [job] });
+        job = rig.Engine.Jobs.Single();
+        var replacement = child with { StartedAt = child.StartedAt.AddHours(1), ImagePath = @"C:\SyntheticOnly\conhost.exe" };
+        var runner = Runner(identity => identity == child ? (false, false, "Win32 5") : (false, true, null),
+            (_, _) => throw new InvalidOperationException("Cleanup must not read GUI status"));
+        var result = await runner.CloseFailedRunAsync(job,
+            new ProcessSnapshot(rig.Clock.Now.AddHours(2), [new ProcessSample(replacement, 0, 0, 0, 0)]), CancellationToken.None);
+        Check.Equal(CleanupState.Closed, result.State, "A current identity proves the persisted old child is gone despite access denial");
+        Check.Equal(0, job.Run!.Children.Count, "Loaded historical identities must be reconciled too");
+    }
+
+    private static async Task LiveOrphanRecovery()
+    {
+        using var rig = new TestRig();
+        var job = Job(rig);
+        var child = new ProcessIdentity(25784, rig.Clock.Now, @"C:\SyntheticOnly\S600.exe");
+        job.Run!.Children.Add(child);
+        Marker(job, "SAVED");
+        var runner = Runner(identity => (identity == child, true, null),
+            (_, _) => throw new InvalidOperationException("Saved runs do not read GUI status"));
+        Check.Equal(RunStage.Saving, (await runner.InspectAsync(job, new(), new(rig.Clock.Now, []), CancellationToken.None)).Stage,
+            "A filtered snapshot may omit a live orphan after restart; direct identity verification must keep it");
+        Check.Equal(child, job.Run.Children.Single(), "A live orphan must remain tracked until its exit is proven");
+    }
 
     private static async Task ChildIdentityRecovery()
     {

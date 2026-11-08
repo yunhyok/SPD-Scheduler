@@ -83,7 +83,7 @@ public sealed class SchedulerEngine
         try
         {
             var job = Get(id);
-            if (job.Status is not (JobStatus.NeedsAttention or JobStatus.Failed) || job.Run?.Id != expectedRunId)
+            if (job.Status is not (JobStatus.Running or JobStatus.NeedsAttention or JobStatus.Failed) || job.Run?.Id != expectedRunId)
                 throw new InvalidOperationException("작업 상태가 변경되었습니다. 목록을 다시 확인한 뒤 수동 정리하세요.");
             IsArmed = false;
             _gate.Reset();

@@ -195,14 +195,15 @@ public sealed class WindowsProcessProbe : IProcessProbe
 
     internal static (bool Alive, bool Readable, string? Detail) IdentityState(ProcessIdentity identity)
     {
-        using var handle = OpenProcess(0x1000 | 0x100000, false, identity.Pid);
+        // Identity reads need limited query access; SYNCHRONIZE can be denied on an otherwise readable PID.
+        using var handle = OpenProcess(0x1000, false, identity.Pid);
         if (handle.IsInvalid)
         {
             int error = Marshal.GetLastWin32Error();
             if (error == 87) return (false, true, $"PID {identity.Pid}: process no longer exists.");
             return (false, false, IdentityFailure(identity, "OpenProcess", new Win32Exception(error)));
         }
-        return EvaluateIdentity(identity, () => HasExited(handle), () => ReadCreationTime(handle), () => ReadImagePath(handle));
+        return EvaluateIdentity(identity, () => HasExited(handle, identity.Pid), () => ReadCreationTime(handle), () => ReadImagePath(handle));
     }
 
     internal static (bool Alive, bool Readable, string? Detail) EvaluateIdentity(ProcessIdentity identity,
@@ -233,13 +234,14 @@ public sealed class WindowsProcessProbe : IProcessProbe
         $"PID {identity.Pid} ({Path.GetFileName(identity.ImagePath)}), {stage}: " +
         (exception is Win32Exception native ? $"Win32 {native.NativeErrorCode}: " : "") + exception.Message;
 
-    private static bool HasExited(SafeProcessHandle handle)
+    private static bool HasExited(SafeProcessHandle handle, int pid)
     {
-        uint result = WaitForSingleObject(handle, 0);
-        if (result == 0) return true;
-        if (result == 258) return false;
-        if (result == uint.MaxValue) throw new Win32Exception(Marshal.GetLastWin32Error());
-        throw new IOException($"Unexpected process wait result: {result}.");
+        if (!GetExitCodeProcess(handle, out uint code)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (code != 259) return true;
+        // A wait distinguishes exit code 259 from STILL_ACTIVE, but must not require extra access for identity reads.
+        using var wait = OpenProcess(0x100000, false, pid);
+        // shortcut: a query-only process exiting with code 259 stays unconfirmed until its PID disappears; add a stronger exit signal if a solver uses it.
+        return !wait.IsInvalid && WaitForSingleObject(wait, 0) == 0;
     }
 
     private static DateTimeOffset ReadCreationTime(SafeProcessHandle handle)

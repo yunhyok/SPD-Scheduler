@@ -4,6 +4,7 @@
     <CopyStatusReader>true</CopyStatusReader>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../../src/SPDScheduler.App/SPDScheduler.App.csproj" />
     <ProjectReference Include="../../src/SPDScheduler.Core/SPDScheduler.Core.csproj" />
     <ProjectReference Include="../../src/SPDScheduler.Windows/SPDScheduler.Windows.csproj" />
     <ProjectReference Include="../../src/SPDScheduler.StatusReader/SPDScheduler.StatusReader.csproj" ReferenceOutputAssembly="false" StatusReader="true" />

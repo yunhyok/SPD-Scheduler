@@ -9,7 +9,8 @@ internal static class ManualResolutionTests
         yield return ("Manual completion preserves the run and records human confirmation without PowerSI commands", CompleteManually);
         yield return ("Manual removal preserves SPD and run logs even with a live owned identity", RemoveManually);
         yield return ("Manual reconciliation permits an unbound run but keeps automatic retry protected", UnboundRun);
-        yield return ("Manual reconciliation rejects active states and stale run authorization", GuardStateAndRun);
+        yield return ("Manual reconciliation rejects starting/saving states and stale run authorization", GuardStateAndRun);
+        yield return ("Stuck Running jobs can be manually completed or removed without simulation commands", ResolveRunning);
         yield return ("Manual reconciliation pauses an armed queue and requires explicit Start", PausesQueue);
         yield return ("Manual completion does not bypass external active simulation checks", ExternalActivity);
         yield return ("A queue save failure rolls back manual completion and removal", PersistenceFailure);
@@ -85,11 +86,11 @@ internal static class ManualResolutionTests
         using var rig = new TestRig();
         var job = await Held(rig);
         Check.Throws<InvalidOperationException>(() => rig.Engine.ResolveManually(job.Id, Guid.NewGuid(), false), "A dialog for an older run cannot resolve a new run");
-        foreach (var status in new[] { JobStatus.Queued, JobStatus.Starting, JobStatus.Running, JobStatus.Saving, JobStatus.Completed })
+        foreach (var status in new[] { JobStatus.Queued, JobStatus.Starting, JobStatus.Saving, JobStatus.Completed })
         {
             job.Status = status;
-            Check.Throws<InvalidOperationException>(() => rig.Engine.ResolveManually(job.Id, job.Run!.Id, false), "Only held/failed jobs support manual completion");
-            Check.Throws<InvalidOperationException>(() => rig.Engine.ResolveManually(job.Id, job.Run!.Id, true), "Only held/failed jobs support manual removal");
+            Check.Throws<InvalidOperationException>(() => rig.Engine.ResolveManually(job.Id, job.Run!.Id, false), "Starting/saving and non-running terminal states cannot be detached");
+            Check.Throws<InvalidOperationException>(() => rig.Engine.ResolveManually(job.Id, job.Run!.Id, true), "Starting/saving and non-running terminal states cannot be detached");
         }
         Check.That(!job.CompletedManually, "Rejected actions must not change completion metadata");
         NoCommands(rig);
@@ -109,6 +110,31 @@ internal static class ManualResolutionTests
         rig.Engine.Start();
         await rig.TickAsync();
         Check.Equal(next.Id, rig.Runner.Launched.Single(), "Explicit Start may continue with the next queued job");
+    }
+
+    private static async Task ResolveRunning()
+    {
+        foreach (bool remove in new[] { false, true })
+        {
+            using var rig = new TestRig();
+            var job = await Held(rig, status: JobStatus.Running);
+            var next = rig.Add("next.spd");
+            rig.Engine.Start();
+            Check.Throws<InvalidOperationException>(() => rig.Engine.Remove(job.Id), "Ordinary deletion still requires manual confirmation");
+            Check.Throws<InvalidOperationException>(() => rig.Engine.ResolveManually(job.Id, Guid.NewGuid(), remove), "A stale dialog cannot detach another run");
+            rig.Engine.ResolveManually(job.Id, job.Run!.Id, remove);
+            Check.That(!rig.Engine.IsArmed, "Detaching a running row must pause the queue");
+            Check.That(remove ? !rig.Engine.Jobs.Contains(job) : job.Status == JobStatus.Completed && job.CompletedManually,
+                "The confirmed running row can be removed or marked manually complete");
+            Check.That(File.Exists(job.FilePath) && File.Exists(Path.Combine(job.Run.DirectoryPath, "events.log")), "Preserve original SPD and run evidence");
+            rig.Probe.Processes[0] = rig.Probe.Processes[0] with { Signal = ProcessSignal.Running };
+            rig.Engine.Start();
+            await rig.TickAsync();
+            NoCommands(rig);
+            rig.Probe.Processes.Clear();
+            await rig.TickAsync();
+            Check.Equal(next.Id, rig.Runner.Launched.Single(), "Next queued job can run after the real simulation is no longer active");
+        }
     }
 
     private static async Task ExternalActivity()
