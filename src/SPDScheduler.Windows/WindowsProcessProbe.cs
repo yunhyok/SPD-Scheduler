@@ -23,7 +23,16 @@ public sealed class WindowsProcessProbe : IProcessProbe
             var signal = ClassifyStatus(status);
             samples[i] = samples[i] with { Signal = signal, Evidence = StatusEvidence(status) };
         }
-        return snapshot with { Processes = samples, ObservationDuration = DateTimeOffset.UtcNow - snapshot.CapturedAt };
+        var disk = await WindowsDiskProbe.CaptureAsync(cancellationToken).ConfigureAwait(false);
+        // Disk sampling waits one second; refresh inventory so a newly opened GUI cannot slip through.
+        var refreshed = await Task.Run(() => Capture(cancellationToken), cancellationToken).ConfigureAwait(false);
+        var statusSamples = samples.ToDictionary(sample => sample.Identity);
+        samples = refreshed.Processes.Select(sample => statusSamples.TryGetValue(sample.Identity, out var status)
+            ? sample with { Signal = sample.Signal == ProcessSignal.None ? status.Signal : sample.Signal, Evidence = sample.Evidence ?? status.Evidence }
+            : sample).ToArray();
+        return refreshed with { Processes = samples, Complete = snapshot.Complete && refreshed.Complete,
+            Error = snapshot.Error ?? refreshed.Error, ObservationDuration = DateTimeOffset.UtcNow - snapshot.CapturedAt,
+            DiskActivePercent = disk.ActivePercent, DiskActivityDetail = disk.Detail };
     }
 
     internal static ProcessSignal ClassifyStatus(string? status)

@@ -31,12 +31,13 @@ internal sealed class FakeProbe(TestClock clock) : IProcessProbe
 {
     public List<ProcessSample> Processes { get; } = [];
     public bool Complete { get; set; } = true;
+    public double DiskActivePercent { get; set; }
     public Func<int, Task>? BeforeCaptureAsync { get; set; }
     private int captures;
     public async Task<ProcessSnapshot> CaptureAsync(CancellationToken cancellationToken)
     {
         if (BeforeCaptureAsync is not null) await BeforeCaptureAsync(++captures);
-        return new ProcessSnapshot(clock.Now, Processes.ToArray(), Complete);
+        return new ProcessSnapshot(clock.Now, Processes.ToArray(), Complete, DiskActivePercent: DiskActivePercent);
     }
 }
 

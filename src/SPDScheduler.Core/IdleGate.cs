@@ -2,6 +2,9 @@ namespace SPDScheduler.Core;
 
 public sealed class IdleGate
 {
+    public const double DiskActiveLimit = 80;
+    private bool _diskRecoveryRequired;
+    private DateTimeOffset? _diskQuietSince, _diskCheckedAt;
     private ProcessSnapshot? _previous;
     private DateTimeOffset? _lowSince;
     private readonly Dictionary<ProcessIdentity, (long Min, long Max)> _memory = [];
@@ -11,7 +14,42 @@ public sealed class IdleGate
     private ProcessSnapshot? _qualifiedBaseline, _qualifiedCurrent;
     public string Details { get; private set; } = "자동 진행 중 외부 PowerSI/PowerDC를 관측하면 감시 정보가 표시됩니다.";
 
-    public void Reset() { ResetIdle(); _runningRoots.Clear(); _completedRoots.Clear(); }
+    public void Reset()
+    {
+        ResetIdle(); _runningRoots.Clear(); _completedRoots.Clear();
+        // A process reset/exit must not erase a pending disk recovery requirement.
+        _diskQuietSince = null; _diskCheckedAt = null;
+    }
+
+    public GateDecision CheckDisk(ProcessSnapshot snapshot, AppSettings settings)
+    {
+        var active = snapshot.DiskActivePercent;
+        if (!double.IsFinite(active) || active is < 0 or > 100 || active >= DiskActiveLimit)
+        {
+            Reset();
+            _diskRecoveryRequired = true;
+            return new(false, false, !double.IsFinite(active) || active is < 0 or > 100
+                ? "디스크 관측 대기 · " + (snapshot.DiskActivityDetail ?? "활성 시간 확인 실패")
+                : $"디스크 후처리 대기 · 활성 {active:F1}% (한도 {DiskActiveLimit:F0}%)");
+        }
+        if (!_diskRecoveryRequired) return new(true, false, "디스크 부하 확인 완료");
+        var measuredAt = snapshot.CapturedAt;
+        if (_diskCheckedAt is { } previous && (measuredAt < previous ||
+            (measuredAt - previous).TotalSeconds > settings.PollIntervalMinutes * 60 + snapshot.ObservationDuration.TotalSeconds + 10))
+            _diskQuietSince = null;
+        _diskCheckedAt = measuredAt;
+        _diskQuietSince ??= measuredAt;
+        var seconds = (measuredAt - _diskQuietSince.Value).TotalSeconds;
+        if (seconds < settings.IdleSeconds)
+            return new(false, false, $"디스크 후처리 대기 · 활성 {active:F1}% · 저부하 관측 {seconds:F0}/{settings.IdleSeconds}초");
+        _diskRecoveryRequired = false;
+        _diskQuietSince = null; _diskCheckedAt = null;
+        return new(true, false, "디스크 저부하 확인 완료");
+    }
+
+    public static string DiskDetails(ProcessSnapshot snapshot) =>
+        $"물리 디스크 활성 시간 (최근 1초, 디스크별 최댓값): {snapshot.DiskActivePercent:F1}% · 한도 {DiskActiveLimit:F0}%\r\n" +
+        (snapshot.DiskActivityDetail ?? "");
 
     private void ResetIdle()
     {
@@ -21,6 +59,8 @@ public sealed class IdleGate
 
     public GateDecision Confirm(ProcessSnapshot snapshot, AppSettings settings)
     {
+        var disk = CheckDisk(snapshot, settings);
+        if (!disk.CanStart) { Details = DiskDetails(snapshot) + "\r\n" + disk.Reason; return disk; }
         var qualified = _qualifiedCurrent;
         var baseline = _qualifiedBaseline;
         if (qualified is null || baseline is null) return new(false, false, "유휴 관측을 먼저 완료해야 합니다.");
@@ -64,7 +104,9 @@ public sealed class IdleGate
         var limits = $"CPU 한도: {settings.IdleCpuPercent:F2}% (1코어 합계) = {settings.IdleCpuPercent / processorCount:F4}% (전체 PC)\r\n" +
             $"읽기/쓰기 I/O 한도: {settings.IdleIoKiBPerSecond} KiB/s · 메모리 변화 한도: {settings.IdleMemoryMiB} MiB · 유휴 유지: {settings.IdleSeconds}초";
         Details = $"측정: {snapshot.CapturedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz} · 논리 프로세서 {processorCount}개\r\n{limits}\r\n" +
+            DiskDetails(snapshot) + "\r\n" +
             string.Join("\r\n", snapshot.Processes.Select(p => $"PID {p.Identity.Pid} · {Path.GetFileName(p.Identity.ImagePath)} · 부모 PID {p.ParentPid} · 상태 {p.Signal}\r\n  근거: {p.Evidence?.Replace("\r", "").Replace("\n", "\r\n    ") ?? "없음"}"));
+        var disk = CheckDisk(snapshot, settings);
         if (!snapshot.Complete)
         {
             Reset();
@@ -72,18 +114,19 @@ public sealed class IdleGate
             return new(false, false, snapshot.Error ?? "PowerSI/PowerDC 프로세스 정보를 확인할 수 없습니다.");
         }
         var processes = snapshot.Processes.Where(p => excluded is null || !excluded.Contains(p.Identity)).ToArray();
-        if (processes.Length == 0)
-        {
-            Reset(); _approvedBbs.Clear(); _qualifiedBaseline = snapshot; _qualifiedCurrent = snapshot;
-            return new(true, false, "다른 PowerSI/PowerDC 작업이 없습니다.");
-        }
-        var current = snapshot with { Processes = processes };
         if (processes.Any(p => !p.Accessible || p.OtherIoBytes > p.IoBytes))
         {
             Reset();
             return new(false, false, "PowerSI/PowerDC 접근 권한 또는 관측 정보가 부족합니다.");
         }
         var allowedPostProcessing = AllowedPostProcessing(processes, settings);
+        if (!disk.CanStart) { Details += "\r\n" + disk.Reason; return disk; }
+        if (processes.Length == 0)
+        {
+            Reset(); _approvedBbs.Clear(); _qualifiedBaseline = snapshot; _qualifiedCurrent = snapshot;
+            return new(true, false, "다른 PowerSI/PowerDC 작업이 없습니다.");
+        }
+        var current = snapshot with { Processes = processes };
         var parallel = allowedPostProcessing.Count > 0 ? "BbsCon 후처리 병행 허용 · " : "";
         Details += $"\r\nBbsCon 후처리 병행: {(settings.AllowBbsPostProcessing ? "허용" : "차단")} · 판정 제외 프로세스: {allowedPostProcessing.Count}개";
         var roots = processes.Where(p => IsSimulationGui(p.Identity)).ToArray();
@@ -147,6 +190,7 @@ public sealed class IdleGate
         if (ioBusy) blockedBy.Add("I/O");
         if (memoryChange > settings.IdleMemoryMiB * 1048576d) blockedBy.Add("메모리 변화");
         Details = $"측정: {current.CapturedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz} · 최근 {seconds:F1}초 평균 · 논리 프로세서 {processorCount}개\r\n{limits}\r\n" +
+            DiskDetails(snapshot) + "\r\n" +
             $"관측 합계 CPU: {observedCpu / processorCount:F2}% (전체 PC), {observedCpu:F2}% (1코어) · I/O 전체: {observedIo / 1024:F1} KiB/s (기타: {observedOtherIo / 1024:F1}) · 메모리 변화: {observedMemoryChange / 1048576:F1} MiB\r\n" +
             $"판정 부하 CPU: {cpu / processorCount:F2}% (전체 PC), {cpu:F2}% (1코어) · 읽기/쓰기 I/O: {io / 1024:F1} KiB/s · 메모리 변화: {memoryChange / 1048576:F1} MiB\r\n" +
             $"BbsCon 후처리 병행: {(settings.AllowBbsPostProcessing ? "허용" : "차단")} · 판정 제외 프로세스: {allowedPostProcessing.Count}개\r\n" +

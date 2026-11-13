@@ -339,6 +339,7 @@ public sealed class SchedulerEngine
             return;
         }
         _resolved.Remove(job.Id);
+        var disk = _gate.CheckDisk(snapshot, Settings);
         if (!snapshot.Complete)
         {
             StatusText = job.Tool + " 관측 대기 · " + (snapshot.Error ?? "정보 부족");
@@ -372,6 +373,11 @@ public sealed class SchedulerEngine
                 job.LastError = null;
                 break;
             case RunStage.ReadyToSave:
+                if (!disk.CanStart)
+                {
+                    StatusText = _ownedObservationDetail = "완료 신호 확인 · " + disk.Reason;
+                    break;
+                }
                 job.Status = JobStatus.Saving;
                 job.LastError = null;
                 if (!run.SaveRequested)
@@ -388,6 +394,7 @@ public sealed class SchedulerEngine
                 break;
             case RunStage.Succeeded:
                 if (observation.ProcessAlive) Attention(job, "저장 후 시뮬레이션/solver 종료가 확인되지 않았습니다.");
+                else if (!disk.CanStart) StatusText = _ownedObservationDetail = "저장·종료 확인 · " + disk.Reason;
                 else Finish(job, true, observation.Detail);
                 break;
             case RunStage.StartFailed:
@@ -451,6 +458,7 @@ public sealed class SchedulerEngine
             snapshot is null ? "현재 실행 감시 · 아직 프로세스 관측 없음" :
                 $"현재 실행 감시 · 측정: {snapshot.CapturedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz}",
             snapshot is null ? "" : snapshot.Complete ? "프로세스 관측 완료" : "관측 불완전: " + (snapshot.Error ?? "정보 부족"),
+            snapshot is null ? "" : IdleGate.DiskDetails(snapshot),
             "현재 실행 관측: " + (_ownedObservationDetail ?? "이번 측정에서 실행 상태를 확인하지 못했습니다.")
         };
         foreach (var job in Jobs.Where(IsActive))

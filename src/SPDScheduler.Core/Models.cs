@@ -81,7 +81,8 @@ public sealed record ProcessSample(
 
 public sealed record ProcessSnapshot(DateTimeOffset CapturedAt,
     IReadOnlyList<ProcessSample> Processes, bool Complete = true, string? Error = null,
-    int LogicalProcessorCount = 1, TimeSpan ObservationDuration = default);
+    int LogicalProcessorCount = 1, TimeSpan ObservationDuration = default,
+    double DiskActivePercent = 0, string? DiskActivityDetail = null);
 
 public sealed record GateDecision(bool CanStart, bool InferredIdle, string Reason);
 
