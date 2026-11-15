@@ -63,7 +63,7 @@ public sealed class PowerSiRunner : IPowerSiRunner
         if (Directory.EnumerateFileSystemEntries(run.DirectoryPath).Any()) throw new IOException("The run folder must be new and empty.");
         run.CreatedAt = DateTimeOffset.UtcNow;
         var script = Path.Combine(run.DirectoryPath, "run.tcl");
-        await File.WriteAllTextAsync(script, CreateScript(run.Id, spd, run.DirectoryPath, job.Tool), new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
+        await File.WriteAllTextAsync(script, CreateScript(run.Id, spd, run.DirectoryPath, job.Tool, job.ThreadCount), new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
         var start = new ProcessStartInfo(executable)
         {
             WorkingDirectory = Path.GetDirectoryName(spd)!, UseShellExecute = false, CreateNoWindow = false
@@ -481,9 +481,12 @@ public sealed class PowerSiRunner : IPowerSiRunner
         File.Move(temporary, path, true);
     }
 
-    public static string CreateScript(Guid runId, string spdPath, string runDirectory, SimulationTool tool = SimulationTool.PowerSI)
+    public static string CreateScript(Guid runId, string spdPath, string runDirectory,
+        SimulationTool tool = SimulationTool.PowerSI, int threadCount = JobItem.DefaultThreadCount)
     {
         if (!Enum.IsDefined(tool)) throw new ArgumentException("지원하지 않는 실행 프로그램입니다.", nameof(tool));
+        SettingsValidator.ValidateThreadCount(threadCount);
+        string threads = threadCount.ToString(CultureInfo.InvariantCulture);
         static string Encoded(string value) => Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
         // PowerDC 25.1 posts its close request and returns an empty Tcl error. Unwind vwait so the GUI can exit.
         string ExitCommand(string failure) => tool == SimulationTool.PowerDC
@@ -554,6 +557,8 @@ public sealed class PowerSiRunner : IPowerSiRunner
                 sigrity::open document $::scheduler_spd {!}
                 set step "Could not configure log folder: $::scheduler_dir"
                 sigrity::update option -caseLogFolder $::scheduler_dir -outputWindowLogName {output.log} {{{logOptions}}} {!}
+                set step "Could not set simulation threads to {{{threads}}}:"
+                sigrity::update HybridComputerResource -smt 0 -local -cn localhost -cpus {{{threads}}} -dp_solver false {!}
                 scheduler_mark OPENED
             } message]} {
                 set ::scheduler_rejected 1

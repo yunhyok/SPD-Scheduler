@@ -5,9 +5,12 @@ public enum SimulationTool { PowerSI = 0, PowerDC = 1 }
 
 public sealed class JobItem
 {
+    public const int DefaultThreadCount = 64;
+
     public Guid Id { get; set; } = Guid.NewGuid();
     public string FilePath { get; set; } = "";
     public SimulationTool Tool { get; set; } = SimulationTool.PowerSI;
+    public int ThreadCount { get; set; } = DefaultThreadCount;
     public long Order { get; set; }
     public DateTimeOffset? ScheduledAt { get; set; }
     public string? ScheduleTimeZone { get; set; }
@@ -67,7 +70,9 @@ public sealed class AppSettings
 
 public sealed class QueueDocument
 {
-    public int SchemaVersion { get; set; } = 2;
+    internal const int CurrentSchemaVersion = 3;
+
+    public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public AppSettings Settings { get; set; } = new();
     public List<JobItem> Jobs { get; set; } = [];
 }

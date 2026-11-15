@@ -4,6 +4,12 @@ namespace SPDScheduler.Core;
 
 public static class SettingsValidator
 {
+    public static void ValidateThreadCount(int threadCount)
+    {
+        if (threadCount is not (16 or 24 or 32 or 48 or 64))
+            throw new ArgumentException("스레드 수는 16, 24, 32, 48, 64 중 하나여야 합니다.", nameof(threadCount));
+    }
+
     public static void Validate(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);

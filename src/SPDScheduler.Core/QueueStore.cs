@@ -30,7 +30,7 @@ public sealed class QueueStore
             using var json = JsonDocument.Parse(stream);
             var document = json.RootElement.Deserialize<QueueDocument>(JsonOptions)
                 ?? throw new InvalidDataException("목록 파일이 비어 있습니다.");
-            if (document.SchemaVersion is not (1 or 2) || document.Jobs is null || document.Settings is null)
+            if (document.SchemaVersion is not (1 or 2 or QueueDocument.CurrentSchemaVersion) || document.Jobs is null || document.Settings is null)
                 throw new InvalidDataException("지원하지 않는 목록 형식입니다.");
             if (document.Jobs.Any(j => j is null || j.Id == Guid.Empty || !Enum.IsDefined(j.Status) || !Enum.IsDefined(j.Tool) ||
                     !Path.IsPathFullyQualified(j.FilePath) || !Path.GetExtension(j.FilePath).Equals(".spd", StringComparison.OrdinalIgnoreCase)) ||
@@ -39,6 +39,7 @@ public sealed class QueueStore
             var runIds = new HashSet<Guid>();
             foreach (var job in document.Jobs)
             {
+                SettingsValidator.ValidateThreadCount(job.ThreadCount);
                 var run = job.Run;
                 if (run is null) continue;
                 var expectedDirectory = Path.Combine(DataDirectory, "runs", run.Id.ToString("N"));
@@ -65,7 +66,7 @@ public sealed class QueueStore
                 document.Settings.IdleMemoryMiB = 128;
                 if (document.Settings.IdleSeconds == 180) document.Settings.IdleSeconds = 60;
             }
-            document.SchemaVersion = 2;
+            document.SchemaVersion = QueueDocument.CurrentSchemaVersion;
             return document;
         }
         catch (Exception ex) when (ex is JsonException or ArgumentException or NotSupportedException)
@@ -80,8 +81,9 @@ public sealed class QueueStore
 
     public void Save(QueueDocument document)
     {
-        // Older schedulers must reject the document rather than launch a PowerDC job as PowerSI.
-        document.SchemaVersion = 2;
+        foreach (var job in document.Jobs) SettingsValidator.ValidateThreadCount(job.ThreadCount);
+        // Older schedulers must reject the document rather than ignore the selected thread count.
+        document.SchemaVersion = QueueDocument.CurrentSchemaVersion;
         var temporary = QueuePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {

@@ -21,6 +21,7 @@ internal sealed class MainForm : Form
     private readonly Button checkNow;
     private readonly Label checkTiming = new() { AutoSize = true, Anchor = AnchorStyles.Left, ForeColor = MutedTextColor, Margin = Padding.Empty };
     private string queueSignature = "";
+    private bool checkPending;
     private bool closeForExit;
 
     public MainForm(SchedulerEngine engine, bool safeMode, Func<Action, Task> command, Func<Task> checkNow, string dataDirectory)
@@ -33,7 +34,7 @@ internal sealed class MainForm : Form
         Text = "SPD Scheduler " + Application.ProductVersion.Split('+')[0] + (safeMode ? " · 안전 모드" : "");
         Font = new Font("맑은 고딕", 9F);
         ClientSize = new Size(744, 490);
-        MinimumSize = new Size(570, 440);
+        MinimumSize = new Size(650, 440);
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -98,7 +99,7 @@ internal sealed class MainForm : Form
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2, Margin = Padding.Empty };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        footer.Controls.Add(new Label { Text = safeMode ? "안전 모드 · PowerSI/PowerDC 실행과 제어 차단 · 기본 PowerSI" : ".spd 추가 시 기본 PowerSI · 대기 작업 우클릭 → 실행 프로그램 변경\n창을 닫아도 트레이에서 계속 실행됩니다", AutoSize = true, ForeColor = MutedTextColor, Margin = new Padding(0, 4, 0, 0) });
+        footer.Controls.Add(new Label { Text = safeMode ? "안전 모드 · PowerSI/PowerDC 실행과 제어 차단 · 기본 64 스레드" : ".spd 기본: PowerSI · 64 스레드 · 대기 작업 우클릭으로 변경\n창을 닫아도 트레이에서 계속 실행됩니다", AutoSize = true, ForeColor = MutedTextColor, Margin = new Padding(0, 4, 0, 0) });
         var help = new LinkLabel { Text = "연동 안내", AutoSize = true, Margin = new Padding(4, 4, 0, 0), LinkColor = FocusColor, ActiveLinkColor = TextColor };
         help.LinkClicked += (_, _) => ShowIntegrationHelp();
         footer.Controls.Add(help);
@@ -116,6 +117,18 @@ internal sealed class MainForm : Form
             executionTool.DropDownItems.Add(item);
         }
         rowMenu.Items.Add(executionTool);
+        var resources = new ToolStripMenuItem("리소스 사용 (스레드)") { Enabled = false };
+        foreach (int threadCount in new[] { 16, 24, 32, 48, 64 })
+        {
+            var item = new ToolStripMenuItem(threadCount == 64 ? "64 스레드 (기본·최대)" : $"{threadCount} 스레드") { Tag = threadCount };
+            item.Click += async (_, _) =>
+            {
+                if (checkPending) { ShowError("상태 확인 중입니다. 확인이 끝난 뒤 스레드 수를 변경하세요."); return; }
+                await SelectedCommandAsync(id => engine.SetThreadCount(id, threadCount));
+            };
+            resources.DropDownItems.Add(item);
+        }
+        rowMenu.Items.Add(resources);
         rowMenu.Items.Add("전체 경로 복사 (Ctrl+C)", null, (_, _) => CopyPaths());
         string? logDirectory = null;
         var openLogs = new ToolStripMenuItem("로그 폴더 열기") { Enabled = false };
@@ -132,6 +145,9 @@ internal sealed class MainForm : Form
                 selectedJobs.All(j => j.Status == JobStatus.Queued);
             foreach (ToolStripMenuItem item in executionTool.DropDownItems)
                 item.Checked = selectedJobs.Length > 0 && selectedJobs.All(j => j.Tool == (SimulationTool)item.Tag!);
+            resources.Enabled = executionTool.Enabled && !checkPending;
+            foreach (ToolStripMenuItem item in resources.DropDownItems)
+                item.Checked = selectedJobs.Length > 0 && selectedJobs.All(j => j.ThreadCount == (int)item.Tag!);
             jobDetails.Enabled = selected.Length == 1;
             jobDetails.Tag = selected.Length == 1 ? selected[0] : null;
             JobItem? job = selected.Length == 1 ? engine.Jobs.FirstOrDefault(j => j.Id == selected[0]) : null;
@@ -171,7 +187,7 @@ internal sealed class MainForm : Form
             if (e.RowIndex < 0) return;
             if (e.ColumnIndex == 1 && grid.Rows[e.RowIndex].Tag is Guid id) ShowJobDetails(id);
             else if (e.ColumnIndex == 2) await ScheduleAsync();
-            else if (e.ColumnIndex == 3) rowMenu.Show(grid, grid.PointToClient(Cursor.Position));
+            else if (e.ColumnIndex is 3 or 4) rowMenu.Show(grid, grid.PointToClient(Cursor.Position));
         };
         DragEnter += (_, e) => e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
         DragDrop += async (_, e) =>
@@ -232,6 +248,7 @@ internal sealed class MainForm : Form
     public void RefreshQueue(DateTimeOffset? nextCheckAt = null, bool checkPending = false)
     {
         if (IsDisposed) return;
+        this.checkPending = checkPending;
         start.Enabled = !engine.IsArmed;
         pause.Enabled = engine.IsArmed;
         checkNow.Enabled = nextCheckAt.HasValue && !checkPending;
@@ -240,7 +257,7 @@ internal sealed class MainForm : Form
         string nextCheck = checkPending ? "확인 중…" : nextCheckAt?.ToLocalTime().ToString("HH:mm:ss") ?? "준비 중";
         checkTiming.Text = $"마지막 확인: {lastCheck}  ·  다음 확인: {nextCheck} ({engine.Settings.PollIntervalMinutes}분 간격)";
         status.Text = (safeMode ? "[안전 모드] " : "") + engine.StatusText;
-        string signature = string.Join("\n", engine.Jobs.Select(j => $"{j.Id}|{j.FilePath}|{j.Tool}|{j.Status}|{j.CompletedManually}|{j.ScheduledAt:O}|{j.LastError}"));
+        string signature = string.Join("\n", engine.Jobs.Select(j => $"{j.Id}|{j.FilePath}|{j.Tool}|{j.ThreadCount}|{j.Status}|{j.CompletedManually}|{j.ScheduledAt:O}|{j.LastError}"));
         if (signature == queueSignature) return;
         queueSignature = signature;
         HashSet<Guid> selected = SelectedIds().ToHashSet();
@@ -248,13 +265,14 @@ internal sealed class MainForm : Form
         grid.Rows.Clear();
         foreach (JobItem job in engine.Jobs)
         {
-            int rowIndex = grid.Rows.Add(job.FileName, StatusName(job), job.ScheduledAt?.ToLocalTime().ToString("MM-dd HH:mm") ?? "순서대로", job.Tool);
+            int rowIndex = grid.Rows.Add(job.FileName, StatusName(job), job.ScheduledAt?.ToLocalTime().ToString("MM-dd HH:mm") ?? "순서대로", job.Tool, job.ThreadCount);
             DataGridViewRow row = grid.Rows[rowIndex];
             row.Tag = job.Id;
             row.Cells[0].ToolTipText = job.FilePath;
             row.Cells[1].ToolTipText = $"{job.LastError ?? StatusName(job)}\n로그 폴더: {LogDirectory(job)}\n두 번 클릭하면 작업 상세를 복사할 수 있습니다.";
             row.Cells[2].ToolTipText = job.ScheduledAt is { } at ? $"{at.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz} ({job.ScheduleTimeZone ?? TimeZoneInfo.Local.Id})" : "예약 없이 대기 순서에 따라 실행";
             row.Cells[3].ToolTipText = "기본 PowerSI · 대기 작업만 우클릭 → 실행 프로그램에서 변경할 수 있습니다.";
+            row.Cells[4].ToolTipText = $"설정: {job.ThreadCount} 스레드 · 다음 시뮬레이션 시작 전에 적용\n대기 작업만 우클릭 → 리소스 사용 (스레드)에서 변경할 수 있습니다.\n실제 CPU 점유율을 고정하는 설정은 아닙니다.";
             row.Selected = selected.Contains(job.Id);
             row.Cells[1].Style.ForeColor = job.Status switch
             {
@@ -285,6 +303,7 @@ internal sealed class MainForm : Form
             $"파일: {job.FilePath}",
             $"작업 ID: {job.Id}",
             $"실행 프로그램: {job.Tool}",
+            $"리소스 설정: {job.ThreadCount} 스레드 (다음 시뮬레이션 시작 전 적용)",
             $"상태: {StatusName(job)} ({job.Status})",
             $"수동 완료: {(job.CompletedManually ? "예" : "아니오")}",
             $"마지막 오류: {job.LastError ?? "없음"}",
@@ -452,6 +471,8 @@ internal sealed class QueueGrid : DataGridView
         Columns.Add(new DataGridViewTextBoxColumn { Name = "Schedule", HeaderText = "실행 예약", FillWeight = 23, MinimumWidth = 125, SortMode = DataGridViewColumnSortMode.NotSortable });
         Columns.Add(new DataGridViewTextBoxColumn { Name = "Tool", HeaderText = "실행 프로그램", FillWeight = 18, MinimumWidth = 100, SortMode = DataGridViewColumnSortMode.NotSortable });
         Columns[3].DisplayIndex = 1;
+        Columns.Add(new DataGridViewTextBoxColumn { Name = "Threads", HeaderText = "스레드", FillWeight = 12, MinimumWidth = 70, SortMode = DataGridViewColumnSortMode.NotSortable });
+        Columns[4].DisplayIndex = 2;
         AccessibleName = "SPD 작업 대기열";
         animation.Tick += (_, _) => AdvanceMarquee();
         VisibleChanged += (_, _) => { if (Visible) { ResetMarquee(); animation.Start(); } else animation.Stop(); };

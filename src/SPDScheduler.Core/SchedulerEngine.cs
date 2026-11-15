@@ -148,6 +148,23 @@ public sealed class SchedulerEngine
         finally { _tick.Release(); }
     }
 
+    public void SetThreadCount(Guid id, int threadCount)
+    {
+        SettingsValidator.ValidateThreadCount(threadCount);
+        if (!_tick.Wait(0)) throw new InvalidOperationException("상태 확인 중입니다. 확인이 끝난 뒤 다시 시도하세요.");
+        try
+        {
+            var job = Get(id);
+            if (job.Status != JobStatus.Queued) throw new InvalidOperationException("대기 작업만 스레드 수를 변경할 수 있습니다.");
+            var previous = job.ThreadCount;
+            job.ThreadCount = threadCount;
+            _gate.Reset();
+            try { Save(); }
+            catch { job.ThreadCount = previous; throw; }
+        }
+        finally { _tick.Release(); }
+    }
+
     public void Retry(Guid id)
     {
         var job = Get(id);

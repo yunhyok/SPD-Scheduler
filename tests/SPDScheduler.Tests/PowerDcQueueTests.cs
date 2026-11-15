@@ -39,7 +39,7 @@ internal static class PowerDcQueueTests
         Check.Equal(SimulationTool.PowerSI, loaded.Jobs.Single().Tool, "Legacy job keeps its original simulation meaning");
         Check.Equal(SimulationTool.PowerSI, loaded.Settings.CompletionRules.Single().Tool, "Legacy rule stays PowerSI only");
         Check.Equal("", loaded.Settings.PowerDcPath, "Legacy settings need no PowerDC path");
-        Check.Equal(2, loaded.SchemaVersion, "Migrate legacy documents to a tool-aware schema");
+        Check.That(loaded.SchemaVersion >= 2, "Migrate legacy documents to a tool-aware schema");
         return Task.CompletedTask;
     }
 
@@ -57,7 +57,7 @@ internal static class PowerDcQueueTests
         Check.Equal(SimulationTool.PowerDC, loaded.Jobs.Single().Tool, "Persist selected tool");
         Check.Equal(SimulationTool.PowerDC, loaded.Settings.CompletionRules.Single().Tool, "Persist rule tool");
         Check.Equal(@"C:\SyntheticOnly\PowerDC.exe", loaded.Settings.PowerDcPath, "Persist configured path");
-        Check.Equal(2, JsonNode.Parse(File.ReadAllText(rig.Store.QueuePath))!["SchemaVersion"]!.GetValue<int>(),
+        Check.That(JsonNode.Parse(File.ReadAllText(rig.Store.QueuePath))!["SchemaVersion"]!.GetValue<int>() >= 2,
             "Old schedulers must reject the queue instead of silently dropping tool selection");
         return Task.CompletedTask;
     }
