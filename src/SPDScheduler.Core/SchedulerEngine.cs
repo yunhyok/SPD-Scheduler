@@ -62,7 +62,7 @@ public sealed class SchedulerEngine
                 { rejected.Add(path + " (이미 대기/실행 중)"); continue; }
                 Document.Jobs.Add(new JobItem { FilePath = fullPath, Order = order++ });
             }
-            catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+            catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException or PathTooLongException)
             { rejected.Add(path + " (" + ex.Message + ")"); }
         }
         Save();
@@ -73,8 +73,10 @@ public sealed class SchedulerEngine
     {
         var job = Get(id);
         if (IsActive(job)) throw new InvalidOperationException("실행 상태가 정리되지 않은 작업은 삭제할 수 없습니다.");
-        Document.Jobs.Remove(job);
-        Save();
+        int index = Document.Jobs.IndexOf(job);
+        Document.Jobs.RemoveAt(index);
+        try { Save(); }
+        catch { Document.Jobs.Insert(index, job); throw; }
     }
 
     public void ResolveManually(Guid id, Guid? expectedRunId, bool remove)
@@ -123,9 +125,55 @@ public sealed class SchedulerEngine
     {
         var job = Get(id);
         if (job.Status != JobStatus.Queued) throw new InvalidOperationException("대기 작업만 예약을 변경할 수 있습니다.");
+        var previousAt = job.ScheduledAt;
+        var previousZone = job.ScheduleTimeZone;
         job.ScheduledAt = scheduledAt;
         job.ScheduleTimeZone = scheduledAt.HasValue ? TimeZoneInfo.Local.Id : null;
-        Save();
+        try { Save(); }
+        catch
+        {
+            job.ScheduledAt = previousAt;
+            job.ScheduleTimeZone = previousZone;
+            throw;
+        }
+    }
+
+    public bool MoveQueued(Guid id, int direction)
+    {
+        if (direction == 0) return false;
+        int step = direction < 0 ? -1 : 1;
+        if (!_tick.Wait(0)) throw new InvalidOperationException("상태 확인 중입니다. 확인이 끝난 뒤 순서를 변경하세요.");
+        try
+        {
+            var job = Get(id);
+            if (job.Status != JobStatus.Queued) throw new InvalidOperationException("대기 작업만 순서를 변경할 수 있습니다.");
+            int index = Document.Jobs.IndexOf(job);
+            int targetIndex = index + step;
+            while (targetIndex >= 0 && targetIndex < Document.Jobs.Count && Document.Jobs[targetIndex].Status != JobStatus.Queued)
+                targetIndex += step;
+            if (targetIndex < 0 || targetIndex >= Document.Jobs.Count) return false;
+            var neighbor = Document.Jobs[targetIndex];
+            long previousJobOrder = job.Order;
+            long previousNeighborOrder = neighbor.Order;
+            Document.Jobs[index] = neighbor;
+            Document.Jobs[targetIndex] = job;
+            if (job.Order != neighbor.Order)
+                (job.Order, neighbor.Order) = (neighbor.Order, job.Order);
+            else if (step < 0)
+                neighbor.Order = job.Order + 1;
+            else
+                job.Order = neighbor.Order + 1;
+            try { Save(); return true; }
+            catch
+            {
+                Document.Jobs[index] = job;
+                Document.Jobs[targetIndex] = neighbor;
+                job.Order = previousJobOrder;
+                neighbor.Order = previousNeighborOrder;
+                throw;
+            }
+        }
+        finally { _tick.Release(); }
     }
 
     public void SetTool(Guid id, SimulationTool tool)
@@ -169,13 +217,32 @@ public sealed class SchedulerEngine
     {
         var job = Get(id);
         EnsureResolved(job);
+        if (Jobs.Any(other => other.Id != id && other.Tool == job.Tool && (other.Status == JobStatus.Queued || IsActive(other)) &&
+            string.Equals(other.FilePath, job.FilePath, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("같은 SPD와 시뮬레이션 도구가 이미 대기/실행 중입니다.");
+        var previousStatus = job.Status;
+        var previousRun = job.Run;
+        bool previousManual = job.CompletedManually;
+        var previousError = job.LastError;
+        var previousFinishedAt = job.FinishedAt;
+        bool wasResolved = _resolved.Contains(id);
         job.Status = JobStatus.Queued;
         job.Run = null;
         job.CompletedManually = false;
         job.LastError = null;
         job.FinishedAt = null;
         _resolved.Remove(id);
-        Save();
+        try { Save(); }
+        catch
+        {
+            job.Status = previousStatus;
+            job.Run = previousRun;
+            job.CompletedManually = previousManual;
+            job.LastError = previousError;
+            job.FinishedAt = previousFinishedAt;
+            if (wasResolved) _resolved.Add(id);
+            throw;
+        }
         _store.AppendLog("사용자가 재시도를 요청했습니다.", id);
     }
 
@@ -183,10 +250,20 @@ public sealed class SchedulerEngine
     {
         var job = Get(id);
         EnsureResolved(job);
+        var previousStatus = job.Status;
+        var previousError = job.LastError;
+        var previousFinishedAt = job.FinishedAt;
         job.Status = JobStatus.Failed;
         job.LastError = "사용자가 건너뛰었습니다.";
         job.FinishedAt = _clock.GetUtcNow();
-        Save();
+        try { Save(); }
+        catch
+        {
+            job.Status = previousStatus;
+            job.LastError = previousError;
+            job.FinishedAt = previousFinishedAt;
+            throw;
+        }
         _store.AppendLog(job.LastError, id);
     }
 
@@ -234,9 +311,15 @@ public sealed class SchedulerEngine
     {
         SettingsValidator.Validate(settings);
         if (Jobs.Any(IsActive)) throw new InvalidOperationException("실행 중인 작업을 정리한 뒤 설정을 변경하세요.");
+        var previous = Document.Settings;
         Document.Settings = settings;
+        try { Save(); }
+        catch
+        {
+            Document.Settings = previous;
+            throw;
+        }
         _gate.Reset();
-        Save();
     }
 
     public void Save()

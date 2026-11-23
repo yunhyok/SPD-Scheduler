@@ -1,3 +1,4 @@
+using Microsoft.Win32;
 using SPDScheduler.Core;
 using SPDScheduler.Windows;
 
@@ -12,6 +13,9 @@ internal sealed class SchedulerContext : ApplicationContext
     private readonly CancellationTokenSource stopping = new();
     private readonly SemaphoreSlim engineGate = new(1, 1);
     private readonly RegisteredWaitHandle showRegistration;
+    private readonly Dictionary<Guid, JobStatus> lastJobStatuses = [];
+    private bool hadPendingWork;
+    private bool statusBaselineReady;
     private bool exiting;
     private bool tickPending;
     private bool initialized;
@@ -24,13 +28,35 @@ internal sealed class SchedulerContext : ApplicationContext
         window = new MainForm(engine, safeMode, RunCommandAsync, TickAsync, store.DataDirectory);
         _ = window.Handle;
         var menu = new ContextMenuStrip();
-        menu.Items.Add("창 열기", null, (_, _) => window.Reveal());
-        menu.Items.Add("대기열 시작", null, async (_, _) => { await RunCommandAsync(engine.Start); if (engine.IsArmed) await TickAsync(); });
-        menu.Items.Add("일시 중지", null, async (_, _) => await RunCommandAsync(engine.Pause));
+        var openItem = new ToolStripMenuItem("창 열기", null, (_, _) => window.Reveal());
+        openItem.Font = new Font(openItem.Font, FontStyle.Bold);
+        var summaryItem = new ToolStripMenuItem("준비 중…") { Enabled = false };
+        var startItem = new ToolStripMenuItem("대기열 시작", null, async (_, _) => { await RunCommandAsync(engine.Start); if (engine.IsArmed) await TickAsync(); });
+        var pauseItem = new ToolStripMenuItem("일시 중지", null, async (_, _) => await RunCommandAsync(engine.Pause));
+        var checkNowItem = new ToolStripMenuItem("지금 확인", null, async (_, _) => await TickAsync());
+        menu.Items.Add(openItem);
+        menu.Items.Add(summaryItem);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(startItem);
+        menu.Items.Add(pauseItem);
+        menu.Items.Add(checkNowItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("종료", null, async (_, _) => await ExitAsync());
+        menu.Opening += (_, _) =>
+        {
+            int queued = engine.Jobs.Count(j => j.Status == JobStatus.Queued);
+            int active = engine.Jobs.Count(j => j.Status is JobStatus.Starting or JobStatus.Running or JobStatus.Saving);
+            int attention = engine.Jobs.Count(j => j.Status == JobStatus.NeedsAttention);
+            string state = attention > 0 ? $"확인 필요 {attention}건" : active > 0 ? "실행 중" : engine.IsArmed ? "자동 진행 중" : "일시 중지";
+            summaryItem.Text = $"{state} · 대기 {queued}건";
+            startItem.Enabled = initialized && !exiting && !engine.IsArmed;
+            pauseItem.Enabled = initialized && !exiting && engine.IsArmed;
+            checkNowItem.Enabled = initialized && !exiting && !tickPending;
+        };
         tray = new NotifyIcon { Icon = window.Icon, Text = "SPD Scheduler", ContextMenuStrip = menu, Visible = true };
         tray.DoubleClick += (_, _) => window.Reveal();
+        tray.BalloonTipClicked += (_, _) => window.Reveal();
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
         showRegistration = ThreadPool.RegisterWaitForSingleObject(signal, (_, _) =>
         {
             if (!exiting && !window.IsDisposed)
@@ -45,11 +71,52 @@ internal sealed class SchedulerContext : ApplicationContext
             initialized = await RunCommandAsync(() => Task.Run(() => engine.InitializeAsync(stopping.Token), stopping.Token));
             if (!initialized) { await ExitAsync(); return; }
             if (exiting) return;
+            CaptureStatusBaseline();
             ticker.Start();
             nextCheckAt = DateTimeOffset.Now.AddMilliseconds(ticker.Interval);
             window.RefreshQueue(nextCheckAt);
             if (show) window.Reveal();
         }));
+    }
+
+    private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode != PowerModes.Resume || exiting || !initialized || window.IsDisposed) return;
+        try { window.BeginInvoke((Action)(async () => await TickAsync())); }
+        catch (InvalidOperationException) { }
+    }
+
+    private void CaptureStatusBaseline()
+    {
+        lastJobStatuses.Clear();
+        foreach (var job in engine.Jobs) lastJobStatuses[job.Id] = job.Status;
+        hadPendingWork = engine.Jobs.Any(j => j.Status is JobStatus.Queued or JobStatus.Starting or JobStatus.Running or JobStatus.Saving);
+        statusBaselineReady = true;
+    }
+
+    private void NotifyTransitions()
+    {
+        if (!statusBaselineReady || exiting || !initialized) return;
+        JobItem? newAttention = null;
+        JobItem? newFailed = null;
+        bool newCompleted = false;
+        foreach (var job in engine.Jobs)
+        {
+            if (lastJobStatuses.TryGetValue(job.Id, out var prior) && prior == job.Status) continue;
+            if (job.Status == JobStatus.NeedsAttention && newAttention is null) newAttention = job;
+            else if (job.Status == JobStatus.Failed && newFailed is null) newFailed = job;
+            else if (job.Status == JobStatus.Completed) newCompleted = true;
+        }
+        bool hasPendingNow = engine.Jobs.Any(j => j.Status is JobStatus.Queued or JobStatus.Starting or JobStatus.Running or JobStatus.Saving);
+        bool allFinished = hadPendingWork && !hasPendingNow && newCompleted && newAttention is null && newFailed is null;
+        CaptureStatusBaseline();
+        if (window.Visible) return;
+        if (newAttention is not null)
+            tray.ShowBalloonTip(6000, "SPD Scheduler · 확인 필요", $"{newAttention.FileName} 작업의 상태를 확인하세요.", ToolTipIcon.Warning);
+        else if (newFailed is not null)
+            tray.ShowBalloonTip(5000, "SPD Scheduler · 작업 실패", $"{newFailed.FileName} 작업이 실패했습니다.", ToolTipIcon.Error);
+        else if (allFinished)
+            tray.ShowBalloonTip(5000, "SPD Scheduler · 대기열 완료", "예정된 모든 시뮬레이션 작업이 완료되었습니다.", ToolTipIcon.Info);
     }
 
     private Task RunCommandAsync(Action command) => RunCommandAsync(() => { command(); return Task.CompletedTask; });
@@ -87,6 +154,7 @@ internal sealed class SchedulerContext : ApplicationContext
                         }
                     }
                     window.RefreshQueue(nextCheckAt, tickPending);
+                    NotifyTransitions();
                     string status = engine.StatusText;
                     string text = "SPD Scheduler · " + status;
                     tray.Text = text[..Math.Min(63, text.Length)];
@@ -125,6 +193,7 @@ internal sealed class SchedulerContext : ApplicationContext
         exiting = true;
         ticker.Stop();
         stopping.Cancel();
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         showRegistration.Unregister(null);
         window.SetExiting();
         await engineGate.WaitAsync();
@@ -140,6 +209,7 @@ internal sealed class SchedulerContext : ApplicationContext
     {
         if (disposing)
         {
+            SystemEvents.PowerModeChanged -= OnPowerModeChanged;
             showRegistration.Unregister(null);
             ticker.Dispose();
             tray.Dispose();

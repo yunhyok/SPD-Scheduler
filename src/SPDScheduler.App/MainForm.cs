@@ -5,21 +5,36 @@ namespace SPDScheduler.App;
 internal sealed class MainForm : Form
 {
     internal static readonly Color PanelColor = Color.FromArgb(0x2b, 0x2e, 0x34);
+    internal static readonly Color PanelHoverColor = Color.FromArgb(0x36, 0x3a, 0x42);
+    internal static readonly Color PanelPressedColor = Color.FromArgb(0x24, 0x27, 0x2c);
+    internal static readonly Color PrimaryColor = Color.FromArgb(0x38, 0x6c, 0xb0);
+    internal static readonly Color PrimaryHoverColor = Color.FromArgb(0x45, 0x7c, 0xc4);
+    internal static readonly Color PrimaryPressedColor = Color.FromArgb(0x2d, 0x58, 0x91);
+    internal static readonly Color BackgroundDark = Color.FromArgb(0x20, 0x22, 0x26);
     internal static readonly Color TextColor = Color.FromArgb(0xec, 0xee, 0xf1);
     internal static readonly Color BorderColor = Color.FromArgb(0x53, 0x59, 0x64);
     internal static readonly Color FocusColor = Color.FromArgb(0x8f, 0xc1, 0xff);
-    private static readonly Color MutedTextColor = Color.FromArgb(0xb9, 0xc0, 0xca);
+    internal static readonly Color SuccessColor = Color.FromArgb(143, 218, 170);
+    internal static readonly Color DangerColor = Color.FromArgb(255, 172, 158);
+    internal static readonly Color MutedTextColor = Color.FromArgb(0xb9, 0xc0, 0xca);
     private static readonly Color EditorColor = Color.FromArgb(0x15, 0x18, 0x1d);
     private readonly SchedulerEngine engine;
     private readonly bool safeMode;
     private readonly Func<Action, Task> command;
+    private readonly Func<Task> checkNowAction;
     private readonly string dataDirectory;
     private readonly QueueGrid grid = new() { Dock = DockStyle.Fill };
+    private readonly Label modeBadge = new() { AutoSize = true, Anchor = AnchorStyles.Left, Padding = new Padding(8, 3, 8, 3), Margin = new Padding(10, 6, 0, 0) };
     private readonly Label status = new() { Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, Margin = Padding.Empty };
     private readonly Button start;
     private readonly Button pause;
+    private readonly Button removeButton;
+    private readonly Button scheduleButton;
+    private readonly Button clearScheduleButton;
+    private readonly Button clearCompletedButton;
     private readonly Button checkNow;
-    private readonly Label checkTiming = new() { AutoSize = true, Anchor = AnchorStyles.Left, ForeColor = MutedTextColor, Margin = Padding.Empty };
+    private readonly Label checkTiming = new() { Dock = DockStyle.Fill, AutoSize = false, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, ForeColor = MutedTextColor, Margin = new Padding(0, 0, 8, 0) };
+    private readonly ToolTip toolTip = new() { AutoPopDelay = 12_000, InitialDelay = 400, ReshowDelay = 200 };
     private string queueSignature = "";
     private bool checkPending;
     private bool closeForExit;
@@ -29,16 +44,17 @@ internal sealed class MainForm : Form
         this.engine = engine;
         this.safeMode = safeMode;
         this.command = command;
+        checkNowAction = checkNow;
         this.dataDirectory = dataDirectory;
         SuspendLayout();
         Text = "SPD Scheduler " + Application.ProductVersion.Split('+')[0] + (safeMode ? " · 안전 모드" : "");
         Font = new Font("맑은 고딕", 9F);
-        ClientSize = new Size(744, 490);
+        ClientSize = new Size(760, 500);
         MinimumSize = new Size(650, 440);
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
-        BackColor = Color.FromArgb(0x20, 0x22, 0x26);
+        BackColor = BackgroundDark;
         ForeColor = TextColor;
         Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
         KeyPreview = true;
@@ -46,74 +62,84 @@ internal sealed class MainForm : Form
 
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20, 16, 20, 12), ColumnCount = 1, RowCount = 6 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 29));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         Controls.Add(layout);
-        var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
+
+        var header = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2, Margin = new Padding(0, 0, 0, 8) };
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var headerLeft = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
         var title = new Label { Text = "SPD Scheduler", Font = new Font(Font.FontFamily, 17F, FontStyle.Bold), AutoSize = true, Margin = Padding.Empty };
-        header.Controls.Add(title);
+        modeBadge.Font = new Font(Font.FontFamily, 8.5F, FontStyle.Bold);
+        headerLeft.Controls.AddRange([title, modeBadge]);
+        header.Controls.Add(headerLeft, 0, 0);
         var execution = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
         start = MakeButton("시작", async () => { await command(engine.Start); if (engine.IsArmed) await checkNow(); }, true);
         pause = MakeButton("일시 중지", async () => await command(engine.Pause));
+        pause.Margin = new Padding(0, 0, 0, 6);
         execution.Controls.AddRange([start, pause]);
-        header.Controls.Add(execution);
+        header.Controls.Add(execution, 1, 0);
         layout.Controls.Add(header, 0, 0);
 
         var tools = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0, 0, 0, 4) };
         tools.Controls.Add(MakeButton("파일 추가", AddFilesAsync));
-        tools.Controls.Add(MakeButton("제거", () => ReconcileSelectionAsync(remove: true)));
-        tools.Controls.Add(MakeButton("예약", ScheduleAsync));
-        tools.Controls.Add(MakeButton("예약 해제", () => SelectedCommandAsync(id => engine.SetSchedule(id, null))));
-        tools.Controls.Add(MakeButton("완료 정리", async () => await command(() =>
+        removeButton = MakeButton("제거", () => ReconcileSelectionAsync(remove: true));
+        tools.Controls.Add(removeButton);
+        scheduleButton = MakeButton("예약", ScheduleAsync);
+        tools.Controls.Add(scheduleButton);
+        clearScheduleButton = MakeButton("예약 해제", () => SelectedCommandAsync(id => engine.SetSchedule(id, null)));
+        tools.Controls.Add(clearScheduleButton);
+        clearCompletedButton = MakeButton("완료 정리", async () => await command(() =>
         {
             foreach (Guid id in engine.Jobs.Where(j => j.Status == JobStatus.Completed).Select(j => j.Id).ToArray()) engine.Remove(id);
-        })));
+        }));
+        tools.Controls.Add(clearCompletedButton);
         tools.Controls.Add(MakeButton("설정", SettingsAsync));
         tools.Controls.Add(MakeButton("감시 상세", () =>
         {
-            using var detail = new Form { Text = "PowerSI/PowerDC 감시 상세", ClientSize = new Size(760, 440),
-                StartPosition = FormStartPosition.CenterParent, Font = Font, MinimizeBox = false, ShowInTaskbar = false };
-            detail.Controls.Add(new TextBox { Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
-                ScrollBars = ScrollBars.Both, WordWrap = false, Text = engine.MonitoringDetails,
-                AccessibleName = "PowerSI/PowerDC 감시 상세 (Ctrl+A, Ctrl+C로 복사)", BackColor = EditorColor, ForeColor = TextColor });
-            detail.ShowDialog(this);
+            ShowTextDialog("PowerSI/PowerDC 감시 상세", () => engine.MonitoringDetails, "PowerSI/PowerDC 감시 상세 (Ctrl+A, Ctrl+C로 복사)", allowRefresh: true);
             return Task.CompletedTask;
         }));
         layout.Controls.Add(tools, 0, 1);
         layout.Controls.Add(grid, 0, 2);
         layout.Controls.Add(status, 0, 3);
+
         var checks = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2, Margin = new Padding(0, 0, 0, 5) };
         checks.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         checks.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        checks.Controls.Add(checkTiming);
+        checks.Controls.Add(checkTiming, 0, 0);
         this.checkNow = MakeButton("지금 확인", checkNow);
         this.checkNow.Margin = Padding.Empty;
-        checks.Controls.Add(this.checkNow);
+        checks.Controls.Add(this.checkNow, 1, 0);
         layout.Controls.Add(checks, 0, 4);
+
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2, Margin = Padding.Empty };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        footer.Controls.Add(new Label { Text = safeMode ? "안전 모드 · PowerSI/PowerDC 실행과 제어 차단 · 기본 64 스레드" : ".spd 기본: PowerSI · 64 스레드 · 대기 작업 우클릭으로 변경\n창을 닫아도 트레이에서 계속 실행됩니다", AutoSize = true, ForeColor = MutedTextColor, Margin = new Padding(0, 4, 0, 0) });
+        footer.Controls.Add(new Label { Text = safeMode ? "안전 모드 · PowerSI/PowerDC 실행과 제어 차단 · 기본 64 스레드" : ".spd 기본: PowerSI · 64 스레드 · 대기 작업 우클릭으로 프로그램·스레드·순서 변경\n창을 닫아도 트레이에서 계속 실행됩니다", AutoSize = true, ForeColor = MutedTextColor, Margin = new Padding(0, 4, 0, 0) });
         var help = new LinkLabel { Text = "연동 안내", AutoSize = true, Margin = new Padding(4, 4, 0, 0), LinkColor = FocusColor, ActiveLinkColor = TextColor };
         help.LinkClicked += (_, _) => ShowIntegrationHelp();
         footer.Controls.Add(help);
         layout.Controls.Add(footer, 0, 5);
 
         var rowMenu = new ContextMenuStrip();
-        var jobDetails = new ToolStripMenuItem("작업 상세") { Enabled = false };
+        var jobDetails = new ToolStripMenuItem("작업 상세 (Enter)") { Enabled = false };
         jobDetails.Click += (_, _) => { if (jobDetails.Tag is Guid id) ShowJobDetails(id); };
         rowMenu.Items.Add(jobDetails);
         var executionTool = new ToolStripMenuItem("실행 프로그램") { Enabled = false };
         foreach (SimulationTool tool in Enum.GetValues<SimulationTool>())
         {
             var item = new ToolStripMenuItem(tool.ToString()) { Tag = tool };
-            item.Click += async (_, _) => await SelectedCommandAsync(id => engine.SetTool(id, tool));
+            item.Click += async (_, _) =>
+            {
+                if (checkPending) { ShowError("상태 확인 중입니다. 확인이 끝난 뒤 실행 프로그램을 변경하세요."); return; }
+                await SelectedCommandAsync(id => engine.SetTool(id, tool));
+            };
             executionTool.DropDownItems.Add(item);
         }
         rowMenu.Items.Add(executionTool);
@@ -129,25 +155,60 @@ internal sealed class MainForm : Form
             resources.DropDownItems.Add(item);
         }
         rowMenu.Items.Add(resources);
-        rowMenu.Items.Add("전체 경로 복사 (Ctrl+C)", null, (_, _) => CopyPaths());
+        var moveUp = new ToolStripMenuItem("순서 위로 (Alt+↑)") { Enabled = false };
+        moveUp.Click += async (_, _) => await MoveSelectedAsync(-1);
+        var moveDown = new ToolStripMenuItem("순서 아래로 (Alt+↓)") { Enabled = false };
+        moveDown.Click += async (_, _) => await MoveSelectedAsync(1);
+        rowMenu.Items.Add(moveUp);
+        rowMenu.Items.Add(moveDown);
+        rowMenu.Items.Add(new ToolStripSeparator());
+        var copyPathsItem = new ToolStripMenuItem("전체 경로 복사 (Ctrl+C)") { Enabled = false };
+        copyPathsItem.Click += (_, _) => CopyPaths();
+        rowMenu.Items.Add(copyPathsItem);
         string? logDirectory = null;
         var openLogs = new ToolStripMenuItem("로그 폴더 열기") { Enabled = false };
+        var scheduleItem = new ToolStripMenuItem("예약 변경 (F2)") { Enabled = false };
+        scheduleItem.Click += async (_, _) => await ScheduleAsync();
+        var clearScheduleItem = new ToolStripMenuItem("예약 해제") { Enabled = false };
+        clearScheduleItem.Click += async (_, _) => await SelectedCommandAsync(id => engine.SetSchedule(id, null));
+        var retryItem = new ToolStripMenuItem("다시 대기") { Enabled = false };
+        retryItem.Click += async (_, _) => await SelectedCommandAsync(engine.Retry);
+        var skipItem = new ToolStripMenuItem("건너뛰기") { Enabled = false };
+        skipItem.Click += async (_, _) => await SelectedCommandAsync(engine.Skip);
         var manualComplete = new ToolStripMenuItem("수동 완료 처리…") { Enabled = false };
         manualComplete.Click += async (_, _) => await ReconcileSelectionAsync(remove: false);
+        var removeItem = new ToolStripMenuItem("제거 (Delete)") { Enabled = false };
+        removeItem.Click += async (_, _) => await ReconcileSelectionAsync(remove: true);
         rowMenu.Items.Add(openLogs);
+        rowMenu.Items.Add(new ToolStripSeparator());
+        rowMenu.Items.Add(scheduleItem);
+        rowMenu.Items.Add(clearScheduleItem);
+        rowMenu.Items.Add(retryItem);
+        rowMenu.Items.Add(skipItem);
+        rowMenu.Items.Add(manualComplete);
+        rowMenu.Items.Add(new ToolStripSeparator());
+        rowMenu.Items.Add(removeItem);
         rowMenu.Opening += (_, _) =>
         {
             Guid[] selected = SelectedIds().ToArray();
             JobItem[] selectedJobs = engine.Jobs.Where(j => selected.Contains(j.Id)).ToArray();
-            manualComplete.Enabled = selected.Length > 0 && selectedJobs.Length == selected.Length &&
-                selectedJobs.All(j => j.Status is JobStatus.Running or JobStatus.NeedsAttention or JobStatus.Failed);
-            executionTool.Enabled = selected.Length > 0 && selectedJobs.Length == selected.Length &&
-                selectedJobs.All(j => j.Status == JobStatus.Queued);
+            bool hasSelection = selected.Length > 0 && selectedJobs.Length == selected.Length;
+            bool allQueued = hasSelection && selectedJobs.All(j => j.Status == JobStatus.Queued);
+            manualComplete.Enabled = hasSelection && selectedJobs.All(j => j.Status is JobStatus.Running or JobStatus.NeedsAttention or JobStatus.Failed);
+            executionTool.Enabled = allQueued && !checkPending;
             foreach (ToolStripMenuItem item in executionTool.DropDownItems)
-                item.Checked = selectedJobs.Length > 0 && selectedJobs.All(j => j.Tool == (SimulationTool)item.Tag!);
-            resources.Enabled = executionTool.Enabled && !checkPending;
+                item.Checked = hasSelection && selectedJobs.All(j => j.Tool == (SimulationTool)item.Tag!);
+            resources.Enabled = allQueued && !checkPending;
             foreach (ToolStripMenuItem item in resources.DropDownItems)
-                item.Checked = selectedJobs.Length > 0 && selectedJobs.All(j => j.ThreadCount == (int)item.Tag!);
+                item.Checked = hasSelection && selectedJobs.All(j => j.ThreadCount == (int)item.Tag!);
+            moveUp.Enabled = selected.Length == 1 && allQueued && !checkPending && CanMoveQueued(selected[0], -1);
+            moveDown.Enabled = selected.Length == 1 && allQueued && !checkPending && CanMoveQueued(selected[0], 1);
+            copyPathsItem.Enabled = hasSelection;
+            scheduleItem.Enabled = allQueued;
+            clearScheduleItem.Enabled = allQueued && selectedJobs.Any(j => j.ScheduledAt.HasValue);
+            retryItem.Enabled = hasSelection && selectedJobs.All(j => j.Status is JobStatus.Failed or JobStatus.NeedsAttention);
+            skipItem.Enabled = hasSelection && selectedJobs.All(j => j.Status is JobStatus.Failed or JobStatus.NeedsAttention);
+            removeItem.Enabled = hasSelection && selectedJobs.All(j => j.Status is not (JobStatus.Starting or JobStatus.Saving));
             jobDetails.Enabled = selected.Length == 1;
             jobDetails.Tag = selected.Length == 1 ? selected[0] : null;
             JobItem? job = selected.Length == 1 ? engine.Jobs.FirstOrDefault(j => j.Id == selected[0]) : null;
@@ -155,24 +216,9 @@ internal sealed class MainForm : Form
             openLogs.Enabled = !string.IsNullOrWhiteSpace(logDirectory) && Directory.Exists(logDirectory);
             openLogs.ToolTipText = logDirectory ?? "실행 기록이 있는 작업 하나를 선택하세요.";
         };
-        openLogs.Click += (_, _) =>
-        {
-            string? directory = logDirectory;
-            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)) return;
-            try
-            {
-                using var folder = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(directory) { UseShellExecute = true });
-            }
-            catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
-            { ShowError($"로그 폴더를 열지 못했습니다.\n{ex.Message}"); }
-        };
-        rowMenu.Items.Add("예약 변경 (F2)", null, async (_, _) => await ScheduleAsync());
-        rowMenu.Items.Add("다시 대기", null, async (_, _) => await SelectedCommandAsync(engine.Retry));
-        rowMenu.Items.Add("건너뛰기", null, async (_, _) => await SelectedCommandAsync(engine.Skip));
-        rowMenu.Items.Add(manualComplete);
-        rowMenu.Items.Add(new ToolStripSeparator());
-        rowMenu.Items.Add("제거 (Delete)", null, async (_, _) => await ReconcileSelectionAsync(remove: true));
+        openLogs.Click += (_, _) => OpenDirectory(logDirectory, "로그 폴더");
         grid.ContextMenuStrip = rowMenu;
+        grid.SelectionChanged += (_, _) => UpdateSelectionActionStates();
         grid.CellMouseDown += (_, e) =>
         {
             if (e.Button == MouseButtons.Right && e.RowIndex >= 0 && !grid.Rows[e.RowIndex].Selected)
@@ -185,7 +231,7 @@ internal sealed class MainForm : Form
         grid.CellDoubleClick += async (_, e) =>
         {
             if (e.RowIndex < 0) return;
-            if (e.ColumnIndex == 1 && grid.Rows[e.RowIndex].Tag is Guid id) ShowJobDetails(id);
+            if (e.ColumnIndex is 0 or 1 && grid.Rows[e.RowIndex].Tag is Guid id) ShowJobDetails(id);
             else if (e.ColumnIndex == 2) await ScheduleAsync();
             else if (e.ColumnIndex is 3 or 4) rowMenu.Show(grid, grid.PointToClient(Cursor.Position));
         };
@@ -206,8 +252,13 @@ internal sealed class MainForm : Form
         {
             if (e.Control && e.KeyCode == Keys.O) { e.SuppressKeyPress = true; await AddFilesAsync(); }
             else if (e.Control && e.KeyCode == Keys.C) { e.SuppressKeyPress = true; CopyPaths(); }
+            else if (e.Control && e.KeyCode == Keys.A) { e.SuppressKeyPress = true; grid.SelectAll(); }
+            else if (e.Alt && e.KeyCode == Keys.Up) { e.SuppressKeyPress = true; await MoveSelectedAsync(-1); }
+            else if (e.Alt && e.KeyCode == Keys.Down) { e.SuppressKeyPress = true; await MoveSelectedAsync(1); }
+            else if (e.KeyCode == Keys.Enter && SelectedIds().Take(2).ToArray() is [var selectedId]) { e.SuppressKeyPress = true; ShowJobDetails(selectedId); }
             else if (e.KeyCode == Keys.Delete) { e.SuppressKeyPress = true; await ReconcileSelectionAsync(remove: true); }
             else if (e.KeyCode == Keys.F2) { e.SuppressKeyPress = true; await ScheduleAsync(); }
+            else if (e.KeyCode == Keys.F5 && this.checkNow.Enabled) { e.SuppressKeyPress = true; await checkNowAction(); }
             else if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; Hide(); }
         };
         ResumeLayout();
@@ -216,9 +267,17 @@ internal sealed class MainForm : Form
 
     private Button MakeButton(string text, Func<Task> action, bool primary = false)
     {
-        var button = new Button { Text = text, AutoSize = true, MinimumSize = new Size(68, 31), Height = 31, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 0, 6, 6), Padding = new Padding(7, 0, 7, 0), BackColor = primary ? Color.FromArgb(0x38, 0x6c, 0xb0) : PanelColor, ForeColor = primary ? Color.White : TextColor, AccessibleName = text };
-        Color border = primary ? button.BackColor : BorderColor;
+        var button = new Button
+        {
+            Text = text, AutoSize = true, MinimumSize = new Size(68, 31), Height = 31, FlatStyle = FlatStyle.Flat,
+            Margin = new Padding(0, 0, 6, 6), Padding = new Padding(7, 0, 7, 0),
+            BackColor = primary ? PrimaryColor : PanelColor, ForeColor = primary ? Color.White : TextColor,
+            Cursor = Cursors.Hand, AccessibleName = text
+        };
+        Color border = primary ? PrimaryColor : BorderColor;
         button.FlatAppearance.BorderColor = border;
+        button.FlatAppearance.MouseOverBackColor = primary ? PrimaryHoverColor : PanelHoverColor;
+        button.FlatAppearance.MouseDownBackColor = primary ? PrimaryPressedColor : PanelPressedColor;
         button.GotFocus += (_, _) => button.FlatAppearance.BorderColor = FocusColor;
         button.LostFocus += (_, _) => button.FlatAppearance.BorderColor = border;
         button.Paint += (_, e) =>
@@ -253,12 +312,43 @@ internal sealed class MainForm : Form
         pause.Enabled = engine.IsArmed;
         checkNow.Enabled = nextCheckAt.HasValue && !checkPending;
         checkNow.Text = checkPending ? "확인 중…" : "지금 확인";
+
+        int queuedCount = engine.Jobs.Count(j => j.Status == JobStatus.Queued);
+        int activeCount = engine.Jobs.Count(j => j.Status is JobStatus.Starting or JobStatus.Running or JobStatus.Saving);
+        int attentionCount = engine.Jobs.Count(j => j.Status == JobStatus.NeedsAttention);
+        int completedCount = engine.Jobs.Count(j => j.Status == JobStatus.Completed);
+        int failedCount = engine.Jobs.Count(j => j.Status == JobStatus.Failed);
+        UpdateModeBadge(activeCount, attentionCount, failedCount);
+
+        var summaryParts = new List<string>();
+        if (activeCount > 0) summaryParts.Add($"실행 {activeCount}");
+        if (queuedCount > 0) summaryParts.Add($"대기 {queuedCount}");
+        if (completedCount > 0) summaryParts.Add($"완료 {completedCount}");
+        if (failedCount > 0) summaryParts.Add($"실패 {failedCount}");
+        if (attentionCount > 0) summaryParts.Add($"확인 필요 {attentionCount}");
+        string summaryPrefix = summaryParts.Count > 0 ? string.Join(" · ", summaryParts) + "  |  " : "";
+
         string lastCheck = engine.LastCheckedAt?.ToLocalTime().ToString("HH:mm:ss") ?? "아직 없음";
         string nextCheck = checkPending ? "확인 중…" : nextCheckAt?.ToLocalTime().ToString("HH:mm:ss") ?? "준비 중";
-        checkTiming.Text = $"마지막 확인: {lastCheck}  ·  다음 확인: {nextCheck} ({engine.Settings.PollIntervalMinutes}분 간격)";
-        status.Text = (safeMode ? "[안전 모드] " : "") + engine.StatusText;
-        string signature = string.Join("\n", engine.Jobs.Select(j => $"{j.Id}|{j.FilePath}|{j.Tool}|{j.ThreadCount}|{j.Status}|{j.CompletedManually}|{j.ScheduledAt:O}|{j.LastError}"));
-        if (signature == queueSignature) return;
+        string timingText = $"{summaryPrefix}마지막 확인: {lastCheck} · 다음 확인: {nextCheck} ({engine.Settings.PollIntervalMinutes}분)";
+        checkTiming.Text = timingText;
+        toolTip.SetToolTip(checkTiming, timingText);
+
+        string statusText = (safeMode ? "[안전 모드] " : "") + engine.StatusText;
+        status.Text = statusText;
+        status.ForeColor = attentionCount > 0 || statusText.Contains("실패") || statusText.Contains("확인 필요") ? DangerColor
+            : activeCount > 0 || engine.IsArmed ? FocusColor
+            : completedCount > 0 && queuedCount == 0 && failedCount == 0 ? SuccessColor
+            : TextColor;
+        toolTip.SetToolTip(status, statusText);
+        clearCompletedButton.Enabled = completedCount > 0;
+
+        string signature = string.Join("\n", engine.Jobs.Select(j => $"{j.Id}|{j.Order}|{j.FilePath}|{j.Tool}|{j.ThreadCount}|{j.Status}|{j.CompletedManually}|{j.ScheduledAt:O}|{j.Run?.Id}|{j.LastError}"));
+        if (signature == queueSignature)
+        {
+            UpdateSelectionActionStates();
+            return;
+        }
         queueSignature = signature;
         HashSet<Guid> selected = SelectedIds().ToHashSet();
         int scroll = grid.FirstDisplayedScrollingRowIndex;
@@ -269,21 +359,107 @@ internal sealed class MainForm : Form
             DataGridViewRow row = grid.Rows[rowIndex];
             row.Tag = job.Id;
             row.Cells[0].ToolTipText = job.FilePath;
-            row.Cells[1].ToolTipText = $"{job.LastError ?? StatusName(job)}\n로그 폴더: {LogDirectory(job)}\n두 번 클릭하면 작업 상세를 복사할 수 있습니다.";
+            row.Cells[1].ToolTipText = $"{job.LastError ?? StatusName(job)}\n로그 폴더: {LogDirectory(job)}\n두 번 클릭하거나 Enter를 누르면 작업 상세를 볼 수 있습니다.";
             row.Cells[2].ToolTipText = job.ScheduledAt is { } at ? $"{at.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz} ({job.ScheduleTimeZone ?? TimeZoneInfo.Local.Id})" : "예약 없이 대기 순서에 따라 실행";
             row.Cells[3].ToolTipText = "기본 PowerSI · 대기 작업만 우클릭 → 실행 프로그램에서 변경할 수 있습니다.";
             row.Cells[4].ToolTipText = $"설정: {job.ThreadCount} 스레드 · 다음 시뮬레이션 시작 전에 적용\n대기 작업만 우클릭 → 리소스 사용 (스레드)에서 변경할 수 있습니다.\n실제 CPU 점유율을 고정하는 설정은 아닙니다.";
             row.Selected = selected.Contains(job.Id);
             row.Cells[1].Style.ForeColor = job.Status switch
             {
-                JobStatus.Completed => Color.FromArgb(143, 218, 170),
-                JobStatus.Failed or JobStatus.NeedsAttention => Color.FromArgb(255, 172, 158),
+                JobStatus.Completed => SuccessColor,
+                JobStatus.Failed or JobStatus.NeedsAttention => DangerColor,
                 JobStatus.Starting or JobStatus.Running or JobStatus.Saving => FocusColor,
                 _ => MutedTextColor
             };
         }
         if (scroll >= 0 && grid.Rows.Count > 0) grid.FirstDisplayedScrollingRowIndex = Math.Min(scroll, grid.Rows.Count - 1);
         grid.ResetMarquee();
+        UpdateSelectionActionStates();
+    }
+
+    private void UpdateModeBadge(int activeCount, int attentionCount, int failedCount)
+    {
+        if (safeMode)
+        {
+            modeBadge.Text = "안전 모드";
+            modeBadge.BackColor = Color.FromArgb(0x45, 0x3b, 0x26);
+            modeBadge.ForeColor = Color.FromArgb(0xf6, 0xd1, 0x7a);
+        }
+        else if (attentionCount > 0)
+        {
+            modeBadge.Text = "확인 필요";
+            modeBadge.BackColor = Color.FromArgb(0x52, 0x2c, 0x2a);
+            modeBadge.ForeColor = DangerColor;
+        }
+        else if (activeCount > 0)
+        {
+            modeBadge.Text = engine.IsArmed ? "실행 중 · 자동" : "실행 중 · 일시 중지";
+            modeBadge.BackColor = Color.FromArgb(0x23, 0x3b, 0x57);
+            modeBadge.ForeColor = FocusColor;
+        }
+        else if (engine.IsArmed)
+        {
+            modeBadge.Text = "자동 진행 중";
+            modeBadge.BackColor = Color.FromArgb(0x23, 0x42, 0x34);
+            modeBadge.ForeColor = SuccessColor;
+        }
+        else if (failedCount > 0 && engine.Jobs.All(j => j.Status is JobStatus.Completed or JobStatus.Failed))
+        {
+            modeBadge.Text = "실패 있음";
+            modeBadge.BackColor = Color.FromArgb(0x52, 0x2c, 0x2a);
+            modeBadge.ForeColor = DangerColor;
+        }
+        else
+        {
+            modeBadge.Text = "일시 중지";
+            modeBadge.BackColor = PanelColor;
+            modeBadge.ForeColor = MutedTextColor;
+        }
+    }
+
+    private void UpdateSelectionActionStates()
+    {
+        Guid[] selected = SelectedIds().ToArray();
+        JobItem[] selectedJobs = engine.Jobs.Where(j => selected.Contains(j.Id)).ToArray();
+        bool hasSelection = selected.Length > 0 && selectedJobs.Length == selected.Length;
+        bool allQueued = hasSelection && selectedJobs.All(j => j.Status == JobStatus.Queued);
+        removeButton.Enabled = hasSelection && selectedJobs.All(j => j.Status is not (JobStatus.Starting or JobStatus.Saving));
+        scheduleButton.Enabled = allQueued;
+        clearScheduleButton.Enabled = allQueued && selectedJobs.Any(j => j.ScheduledAt.HasValue);
+    }
+
+    private bool CanMoveQueued(Guid id, int direction)
+    {
+        int index = -1;
+        for (int i = 0; i < engine.Jobs.Count; i++)
+        {
+            if (engine.Jobs[i].Id == id) { index = i; break; }
+        }
+        if (index < 0 || engine.Jobs[index].Status != JobStatus.Queued) return false;
+        int step = direction < 0 ? -1 : 1;
+        for (int i = index + step; i >= 0 && i < engine.Jobs.Count; i += step)
+            if (engine.Jobs[i].Status == JobStatus.Queued) return true;
+        return false;
+    }
+
+    private async Task MoveSelectedAsync(int direction)
+    {
+        Guid[] ids = SelectedIds().ToArray();
+        if (ids.Length != 1) return;
+        if (checkPending) { ShowError("상태 확인 중입니다. 확인이 끝난 뒤 순서를 변경하세요."); return; }
+        if (!CanMoveQueued(ids[0], direction)) return;
+        await command(() => engine.MoveQueued(ids[0], direction));
+        if (IsDisposed) return;
+        grid.ClearSelection();
+        foreach (DataGridViewRow row in grid.Rows)
+        {
+            if (row.Tag is Guid rowId && rowId == ids[0])
+            {
+                row.Selected = true;
+                grid.CurrentCell = row.Cells[0];
+                break;
+            }
+        }
     }
 
     private IEnumerable<Guid> SelectedIds() => grid.SelectedRows.Cast<DataGridViewRow>().OrderBy(r => r.Index).Select(r => (Guid)r.Tag!);
@@ -294,11 +470,106 @@ internal sealed class MainForm : Form
         return string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory) ? Path.Combine(dataDirectory, "logs") : directory;
     }
 
+    private void OpenDirectory(string? directory, string label)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)) return;
+        try
+        {
+            using var folder = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(directory) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
+        { ShowError($"{label}를 열지 못했습니다.\n{ex.Message}"); }
+    }
+
+    private void ShowTextDialog(string title, Func<string> getText, string accessibleName, bool allowRefresh = false, string? openFolderPath = null)
+    {
+        using var detail = new Form
+        {
+            Text = title, ClientSize = new Size(760, 460), MinimumSize = new Size(520, 320),
+            StartPosition = FormStartPosition.CenterParent, Font = Font, MinimizeBox = false, ShowInTaskbar = false,
+            AutoScaleDimensions = new SizeF(96F, 96F), AutoScaleMode = AutoScaleMode.Dpi,
+            BackColor = BackgroundDark, ForeColor = TextColor
+        };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 2 };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var box = new TextBox
+        {
+            Multiline = true, ReadOnly = true, Dock = DockStyle.Fill, ScrollBars = ScrollBars.Both, WordWrap = false,
+            Text = getText(), AccessibleName = accessibleName, BackColor = EditorColor, ForeColor = TextColor,
+            BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(0, 0, 0, 10)
+        };
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Margin = Padding.Empty
+        };
+        var close = MakeDialogButton("닫기", primary: false);
+        close.DialogResult = DialogResult.Cancel;
+        close.Margin = Padding.Empty;
+        var copy = MakeDialogButton("클립보드 복사", primary: true);
+        copy.Click += (_, _) =>
+        {
+            try
+            {
+                Clipboard.SetText(box.Text);
+                copy.Text = "복사됨";
+            }
+            catch (System.Runtime.InteropServices.ExternalException)
+            {
+                ShowError("클립보드가 사용 중입니다. 다시 시도하세요.");
+            }
+        };
+        buttons.Controls.Add(close);
+        buttons.Controls.Add(copy);
+        if (allowRefresh)
+        {
+            var refresh = MakeDialogButton("새로 고침", primary: false);
+            refresh.Click += (_, _) =>
+            {
+                box.Text = getText();
+                copy.Text = "클립보드 복사";
+            };
+            buttons.Controls.Add(refresh);
+        }
+        if (!string.IsNullOrWhiteSpace(openFolderPath) && Directory.Exists(openFolderPath))
+        {
+            var openFolder = MakeDialogButton("로그 폴더 열기", primary: false);
+            openFolder.Click += (_, _) => OpenDirectory(openFolderPath, "로그 폴더");
+            buttons.Controls.Add(openFolder);
+        }
+        root.Controls.Add(box, 0, 0);
+        root.Controls.Add(buttons, 0, 1);
+        detail.Controls.Add(root);
+        detail.CancelButton = close;
+        detail.ShowDialog(this);
+    }
+
+    private Button MakeDialogButton(string text, bool primary)
+    {
+        var button = new Button
+        {
+            Text = text, AutoSize = true, MinimumSize = new Size(76, 30), Height = 30, FlatStyle = FlatStyle.Flat,
+            Margin = new Padding(0, 0, 6, 0), Padding = new Padding(8, 0, 8, 0),
+            BackColor = primary ? PrimaryColor : PanelColor, ForeColor = primary ? Color.White : TextColor,
+            Cursor = Cursors.Hand
+        };
+        Color border = primary ? PrimaryColor : BorderColor;
+        button.FlatAppearance.BorderColor = border;
+        button.FlatAppearance.MouseOverBackColor = primary ? PrimaryHoverColor : PanelHoverColor;
+        button.FlatAppearance.MouseDownBackColor = primary ? PrimaryPressedColor : PanelPressedColor;
+        button.GotFocus += (_, _) => button.FlatAppearance.BorderColor = FocusColor;
+        button.LostFocus += (_, _) => button.FlatAppearance.BorderColor = border;
+        return button;
+    }
+
     private void ShowJobDetails(Guid id)
     {
         JobItem? job = engine.Jobs.FirstOrDefault(j => j.Id == id);
         if (job is null) return;
         RunRecord? run = job.Run;
+        string logDir = LogDirectory(job);
         string text = string.Join(Environment.NewLine,
             $"파일: {job.FilePath}",
             $"작업 ID: {job.Id}",
@@ -313,13 +584,8 @@ internal sealed class MainForm : Form
             $"실행 생성 시각: {run?.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz") ?? "없음"}",
             $"프로세스 시작 시각: {run?.Process?.StartedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz") ?? "없음"}",
             $"작업 종료 시각: {job.FinishedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz") ?? "없음"}",
-            $"로그 폴더: {LogDirectory(job)}");
-        using var detail = new Form { Text = "작업 상세 · " + job.FileName, ClientSize = new Size(760, 440),
-            StartPosition = FormStartPosition.CenterParent, Font = Font, MinimizeBox = false, ShowInTaskbar = false };
-        detail.Controls.Add(new TextBox { Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
-            ScrollBars = ScrollBars.Both, WordWrap = false, Text = text,
-            AccessibleName = "작업 상세 (Ctrl+A, Ctrl+C로 복사)", BackColor = EditorColor, ForeColor = TextColor });
-        detail.ShowDialog(this);
+            $"로그 폴더: {logDir}");
+        ShowTextDialog("작업 상세 · " + job.FileName, () => text, "작업 상세 (Ctrl+A, Ctrl+C로 복사)", openFolderPath: logDir);
     }
 
     private async Task SelectedCommandAsync(Action<Guid> action)
@@ -346,17 +612,39 @@ internal sealed class MainForm : Form
             string instruction = remove
                 ? "PowerSI/PowerDC 상태와 결과 저장 여부를 직접 확인한 뒤 목록에서 제거하세요."
                 : "시뮬레이션 완료와 결과 저장을 직접 확인한 작업만 수동 완료 처리하세요.";
-            using var confirm = new Form { Text = action, ClientSize = new Size(600, 330), Font = Font,
-                StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false };
-            confirm.Controls.Add(new TextBox { Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
-                ScrollBars = ScrollBars.Vertical, BackColor = Color.White,
+            using var confirm = new Form
+            {
+                Text = action, ClientSize = new Size(600, 340), MinimumSize = new Size(460, 260), Font = Font,
+                StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false,
+                AutoScaleDimensions = new SizeF(96F, 96F), AutoScaleMode = AutoScaleMode.Dpi,
+                BackColor = BackgroundDark, ForeColor = TextColor
+            };
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14), ColumnCount = 1, RowCount = 2 };
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.Controls.Add(new TextBox
+            {
+                Multiline = true, ReadOnly = true, Dock = DockStyle.Fill, ScrollBars = ScrollBars.Vertical,
+                BackColor = EditorColor, ForeColor = TextColor, BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(0, 0, 0, 10),
                 Text = instruction + "\r\n\r\n앱은 목록만 변경하며 PowerSI/PowerDC 저장·종료를 실행하지 않습니다. 실행 기록과 로그는 보존합니다.\r\n대기열은 일시 중지되며, 다시 진행하려면 [시작]을 눌러야 합니다.\r\n\r\n선택한 작업:\r\n" +
-                    string.Join("\r\n", selected.Select(j => $"• {j.FileName} ({StatusName(j.Status)})")), AccessibleName = "수동 처리 확인 내용" });
-            var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 45, Padding = new Padding(6), FlowDirection = FlowDirection.RightToLeft };
-            var cancel = new Button { Text = "취소", DialogResult = DialogResult.Cancel, AutoSize = true };
+                    string.Join("\r\n", selected.Select(j => $"• {j.FileName} ({StatusName(j.Status)})")),
+                AccessibleName = "수동 처리 확인 내용"
+            }, 0, 0);
+            var buttons = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Margin = Padding.Empty
+            };
+            var cancel = MakeDialogButton("취소", primary: false);
+            cancel.DialogResult = DialogResult.Cancel;
+            cancel.Margin = Padding.Empty;
+            var proceed = MakeDialogButton(remove ? "제거" : "수동 완료", primary: true);
+            proceed.DialogResult = DialogResult.OK;
             buttons.Controls.Add(cancel);
-            buttons.Controls.Add(new Button { Text = remove ? "제거" : "수동 완료", DialogResult = DialogResult.OK, AutoSize = true });
-            confirm.Controls.Add(buttons);
+            buttons.Controls.Add(proceed);
+            root.Controls.Add(buttons, 0, 1);
+            confirm.Controls.Add(root);
             confirm.AcceptButton = cancel;
             confirm.CancelButton = cancel;
             if (confirm.ShowDialog(this) != DialogResult.OK) return;
@@ -386,14 +674,73 @@ internal sealed class MainForm : Form
     {
         Guid[] ids = SelectedIds().ToArray();
         if (ids.Length == 0) return;
-        JobItem? first = engine.Jobs.FirstOrDefault(j => j.Id == ids[0]);
-        using var dialog = new Form { Text = "실행 예약", Font = Font, ClientSize = new Size(345, 180), StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
-        var label = new Label { Text = $"선택한 {ids.Length}개 파일의 실행 가능 시각", AutoSize = true, Location = new Point(18, 17) };
-        var picker = new DateTimePicker { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd  HH:mm:ss", Value = first?.ScheduledAt?.LocalDateTime ?? DateTime.Now.AddMinutes(1), Location = new Point(18, 48), Width = 306 };
-        var note = new Label { Text = "PC의 현재 표준 시간대 기준입니다.\n예약 이후에도 시뮬레이션 사용 중이면 기다립니다.", AutoSize = true, Location = new Point(18, 81), ForeColor = Color.DimGray };
-        var ok = new Button { Text = "예약", DialogResult = DialogResult.OK, Location = new Point(165, 137), Size = new Size(76, 29) };
-        var cancel = new Button { Text = "취소", DialogResult = DialogResult.Cancel, Location = new Point(249, 137), Size = new Size(76, 29) };
-        dialog.Controls.AddRange([label, picker, note, ok, cancel]);
+        JobItem[] selectedJobs = engine.Jobs.Where(j => ids.Contains(j.Id)).ToArray();
+        if (selectedJobs.Length != ids.Length || selectedJobs.Any(j => j.Status != JobStatus.Queued))
+        {
+            ShowError("대기 작업만 예약을 변경할 수 있습니다.");
+            return;
+        }
+        JobItem first = selectedJobs[0];
+        using var dialog = new Form
+        {
+            Text = "실행 예약", Font = Font, ClientSize = new Size(400, 225), MinimumSize = new Size(370, 215),
+            StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false, MinimizeBox = false, ShowInTaskbar = false,
+            AutoScaleDimensions = new SizeF(96F, 96F), AutoScaleMode = AutoScaleMode.Dpi,
+            BackColor = BackgroundDark, ForeColor = TextColor
+        };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(16), ColumnCount = 1, RowCount = 5 };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        for (int i = 0; i < 4; i++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var label = new Label { Text = $"선택한 {ids.Length}개 파일의 실행 가능 시각", AutoSize = true, Margin = new Padding(0, 0, 0, 8) };
+        var picker = new DateTimePicker
+        {
+            Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd  HH:mm:ss",
+            Value = first.ScheduledAt?.LocalDateTime ?? DateTime.Now.AddMinutes(10),
+            Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 8)
+        };
+        var presets = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = true, Margin = new Padding(0, 0, 0, 8) };
+        void AddPreset(string caption, Func<DateTime> compute)
+        {
+            var button = MakeDialogButton(caption, primary: false);
+            button.MinimumSize = new Size(64, 26);
+            button.Height = 26;
+            button.Padding = new Padding(6, 0, 6, 0);
+            button.Margin = new Padding(0, 0, 6, 4);
+            button.Click += (_, _) => picker.Value = compute();
+            presets.Controls.Add(button);
+        }
+        AddPreset("+10분", () => DateTime.Now.AddMinutes(10));
+        AddPreset("+30분", () => DateTime.Now.AddMinutes(30));
+        AddPreset("+1시간", () => DateTime.Now.AddHours(1));
+        AddPreset("내일 09:00", () => DateTime.Today.AddDays(1).AddHours(9));
+
+        var note = new Label
+        {
+            Text = "PC의 현재 표준 시간대 기준입니다.\n예약 이후에도 시뮬레이션 사용 중이면 기다립니다.",
+            AutoSize = true, ForeColor = MutedTextColor, Margin = new Padding(0, 0, 0, 12)
+        };
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Margin = Padding.Empty
+        };
+        var cancel = MakeDialogButton("취소", primary: false);
+        cancel.DialogResult = DialogResult.Cancel;
+        cancel.Margin = Padding.Empty;
+        var ok = MakeDialogButton("예약", primary: true);
+        ok.DialogResult = DialogResult.OK;
+        buttons.Controls.Add(cancel);
+        buttons.Controls.Add(ok);
+
+        root.Controls.Add(label, 0, 0);
+        root.Controls.Add(picker, 0, 1);
+        root.Controls.Add(presets, 0, 2);
+        root.Controls.Add(note, 0, 3);
+        root.Controls.Add(buttons, 0, 4);
+        dialog.Controls.Add(root);
         dialog.AcceptButton = ok;
         dialog.CancelButton = cancel;
         if (dialog.ShowDialog(this) == DialogResult.OK)
@@ -420,11 +767,11 @@ internal sealed class MainForm : Form
     }
 
     private void ShowIntegrationHelp() => MessageBox.Show(this,
-        "PowerSI/PowerDC 연동은 실제 설치 환경에서 아직 검증되지 않았습니다.\n\n" +
-        "설정에서 사용할 PowerSI/PowerDC 실행 파일과 사용 환경에 맞는 완료 판정 규칙을 확인하세요. 규칙은 SPD 내용, 실행 시작 표시, 완료 표시를 각각 식별해야 합니다. 근거가 없거나 읽을 수 없으면 자동으로 완료 처리하지 않습니다.\n\n" +
+        "PowerDC 2025.1 단일 보드 IR Drop은 영문 파일명 기준 실행·저장·종료를 확인했으며, 기타 PowerSI/PowerDC 모드는 사용 환경에 맞는 검증이 필요합니다.\n\n" +
+        "설정에서 사용할 PowerSI/PowerDC 실행 파일과 작업별 완료 판정 규칙을 확인하세요. 근거가 없거나 물리 디스크 활성 시간이 80% 이상이면 자동 완료·다음 작업 시작을 보류합니다.\n\n" +
         "일시 중지는 다음 작업의 자동 시작을 멈춥니다. 현재 PowerSI/PowerDC 작업은 계속 실행됩니다. 앱 종료도 PowerSI/PowerDC를 강제로 종료하지 않습니다.\n\n" +
-        "새 SPD는 PowerSI로 추가됩니다. 대기 작업을 우클릭한 뒤 [실행 프로그램]에서 PowerDC로 변경할 수 있습니다. SPD는 선택한 프로그램에서 바로 실행할 수 있도록 저장되어 있어야 합니다. 앱은 저장된 해석 설정을 사용하며, 프로그램 선택만으로 해석 종류를 변환하지 않습니다. PowerDC 결과 XML은 작업별 로그 폴더에 저장합니다.\n\n" +
-        "단축키: Ctrl+O 파일 추가 · Ctrl+C 전체 경로 복사 · F2 예약 · Delete 제거 · Esc 트레이로 숨기기",
+        "새 SPD는 PowerSI · 64 스레드로 추가됩니다. 대기 작업을 우클릭해 [실행 프로그램], [리소스 사용 (스레드)], [순서 위로/아래로]를 변경할 수 있습니다. PowerDC 결과 XML은 작업별 로그 폴더에 저장합니다.\n\n" +
+        "단축키: Ctrl+O 파일 추가 · Ctrl+C 경로 복사 · Ctrl+A 전체 선택 · Enter 작업 상세 · F2 예약 · F5 지금 확인 · Alt+↑/↓ 순서 이동 · Delete 제거 · Esc 트레이로 숨기기",
         "PowerSI/PowerDC 연동 안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
     private static string StatusName(JobItem job) => job.Status == JobStatus.Completed && job.CompletedManually ? "완료 (수동)" : StatusName(job.Status);
@@ -434,6 +781,12 @@ internal sealed class MainForm : Form
         JobStatus.Queued => "대기", JobStatus.Starting => "시작 중", JobStatus.Running => "실행 중", JobStatus.Saving => "저장 중",
         JobStatus.Completed => "완료", JobStatus.Failed => "실패", JobStatus.NeedsAttention => "확인 필요", _ => value.ToString()
     };
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) toolTip.Dispose();
+        base.Dispose(disposing);
+    }
 }
 
 internal sealed class QueueGrid : DataGridView
@@ -463,6 +816,7 @@ internal sealed class QueueGrid : DataGridView
         ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.Single;
         ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle { BackColor = MainForm.PanelColor, ForeColor = MainForm.TextColor, Padding = new Padding(7, 0, 0, 0), SelectionBackColor = MainForm.PanelColor, SelectionForeColor = MainForm.TextColor };
         DefaultCellStyle = new DataGridViewCellStyle { BackColor = BackgroundColor, ForeColor = MainForm.TextColor, SelectionBackColor = Color.FromArgb(0x29, 0x4e, 0x7c), SelectionForeColor = Color.White, Padding = new Padding(7, 0, 5, 0), WrapMode = DataGridViewTriState.False };
+        AlternatingRowsDefaultCellStyle = new DataGridViewCellStyle { BackColor = Color.FromArgb(0x22, 0x25, 0x2b), ForeColor = MainForm.TextColor, SelectionBackColor = Color.FromArgb(0x29, 0x4e, 0x7c), SelectionForeColor = Color.White, Padding = new Padding(7, 0, 5, 0), WrapMode = DataGridViewTriState.False };
         ColumnHeadersHeight = 34;
         ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
         RowTemplate.Height = 34;
@@ -475,13 +829,26 @@ internal sealed class QueueGrid : DataGridView
         Columns[4].DisplayIndex = 2;
         AccessibleName = "SPD 작업 대기열";
         animation.Tick += (_, _) => AdvanceMarquee();
-        VisibleChanged += (_, _) => { if (Visible) { ResetMarquee(); animation.Start(); } else animation.Stop(); };
+        VisibleChanged += (_, _) => { if (Visible) ResetMarquee(); else animation.Stop(); };
         ColumnWidthChanged += (_, _) => ResetMarquee();
-        Scroll += (_, _) => InvalidateColumn(0);
+        Resize += (_, _) => ResetMarquee();
+        Scroll += (_, _) => { InvalidateColumn(0); EnsureAnimationRunning(); };
         CellPainting += PaintFileName;
     }
 
-    public void ResetMarquee() { positions.Clear(); lastFrame = Environment.TickCount64; InvalidateColumn(0); }
+    public void ResetMarquee()
+    {
+        positions.Clear();
+        lastFrame = Environment.TickCount64;
+        InvalidateColumn(0);
+        EnsureAnimationRunning();
+    }
+
+    private void EnsureAnimationRunning()
+    {
+        if (!Visible || Rows.Count == 0) { animation.Stop(); return; }
+        if (!animation.Enabled) { lastFrame = Environment.TickCount64; animation.Start(); }
+    }
 
     private void AdvanceMarquee()
     {
@@ -490,15 +857,17 @@ internal sealed class QueueGrid : DataGridView
         float step = Math.Min(100, now - lastFrame) * 0.03f * DeviceDpi / 96F;
         lastFrame = now;
         int first = FirstDisplayedScrollingRowIndex;
-        if (first < 0) return;
+        if (first < 0) { animation.Stop(); return; }
         int end = Math.Min(Rows.Count, first + DisplayedRowCount(true));
+        bool anyOverflow = false;
         for (int index = first; index < end; index++)
         {
             DataGridViewRow row = Rows[index];
             if (row.Tag is not Guid id) continue;
             string text = row.Cells[0].Value?.ToString() ?? "";
-            int overflow = TextRenderer.MeasureText(text, Font, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width - Columns[0].Width + 16;
+            int overflow = TextRenderer.MeasureText(text, Font, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix).Width - Columns[0].Width + 16;
             if (overflow <= 0) { positions.Remove(id); continue; }
+            anyOverflow = true;
             if (!positions.TryGetValue(id, out ScrollPosition? position)) positions[id] = position = new ScrollPosition { WaitUntil = now + 1100 };
             if (now < position.WaitUntil) continue;
             position.Offset += position.Reverse ? -step : step;
@@ -507,6 +876,19 @@ internal sealed class QueueGrid : DataGridView
             System.Diagnostics.Debug.Assert(position.Offset >= 0 && position.Offset <= overflow);
             InvalidateCell(0, row.Index);
         }
+        if (!anyOverflow) animation.Stop();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        if (Rows.Count > 0) return;
+        Rectangle area = new(12, ColumnHeadersHeight + 12, Math.Max(0, ClientSize.Width - 24), Math.Max(0, ClientSize.Height - ColumnHeadersHeight - 24));
+        if (area.Width <= 0 || area.Height <= 0) return;
+        TextRenderer.DrawText(e.Graphics,
+            "여기에 .spd 파일을 끌어다 놓거나 [파일 추가] (Ctrl+O)로 작업을 등록하세요.\n새 파일은 PowerSI · 64 스레드로 추가되며, 대기 행을 우클릭해 변경할 수 있습니다.",
+            Font, area, MainForm.MutedTextColor,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak);
     }
 
     private void PaintFileName(object? sender, DataGridViewCellPaintingEventArgs e)

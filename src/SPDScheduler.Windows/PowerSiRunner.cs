@@ -108,7 +108,7 @@ public sealed class PowerSiRunner : IPowerSiRunner
             state.Counters[sample.Identity.Pid] = (sample.CpuSeconds, sample.IoBytes);
         }
         var markers = ReadMarkers(run);
-        if (markers.Contains("EXIT_FAILED")) return new(RunStage.Unknown, "Saving succeeded but The simulation application rejected exit; inspect this run's error.txt and GUI.", alive, activity);
+        if (markers.Contains("EXIT_FAILED")) return new(RunStage.Unknown, "Saving succeeded, but the simulation application rejected exit; inspect this run's error.txt and GUI.", alive, activity);
         if (markers.Contains("SAVED"))
         {
             if (!identitiesReadable) return PendingIdentity();
@@ -321,6 +321,8 @@ public sealed class PowerSiRunner : IPowerSiRunner
 
     private static async Task PersistEvidenceAsync(RunRecord run, EvidenceState state, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(run.DirectoryPath)) return;
+        Directory.CreateDirectory(run.DirectoryPath);
         string path = Path.Combine(run.DirectoryPath, "freshness.json");
         string text = JsonSerializer.Serialize(new Freshness(run.Id, state.SawNonCompletedUi, state.Started, state.RuleStarted));
         if (File.Exists(path) && await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false) == text) return;
@@ -396,7 +398,7 @@ public sealed class PowerSiRunner : IPowerSiRunner
             if (candidates.Length == 0) return null;
             var patterns = candidates.Select(rule => new Regex(rule.SpdPattern, RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100))).ToArray();
             var matched = new HashSet<int>();
-            await using var stream = new FileStream(spd, FileMode.Open, FileAccess.Read, FileShare.Read, 8192, FileOptions.Asynchronous | FileOptions.SequentialScan);
+            await using var stream = new FileStream(spd, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 8192, FileOptions.Asynchronous | FileOptions.SequentialScan);
             using var reader = new StreamReader(stream, Encoding.UTF8, true);
             var buffer = new char[8192];
             var line = new StringBuilder();
@@ -445,7 +447,11 @@ public sealed class PowerSiRunner : IPowerSiRunner
         state.CompletedPowerDcLog = null;
         state.CompletionAt = null;
         state.ObservedLog = null;
-        if (!string.IsNullOrWhiteSpace(run.DirectoryPath)) File.Delete(Path.Combine(run.DirectoryPath, "completion.txt"));
+        if (!string.IsNullOrWhiteSpace(run.DirectoryPath))
+        {
+            string completionPath = Path.Combine(run.DirectoryPath, "completion.txt");
+            if (File.Exists(completionPath)) File.Delete(completionPath);
+        }
     }
 
     public static LogEvidence EvaluateLogEvidence(string output, CompletionRule rule, bool previouslyStarted)
@@ -519,9 +525,16 @@ public sealed class PowerSiRunner : IPowerSiRunner
                 set command ""
                 set path [file join $::scheduler_dir control.txt]
                 if {[file exists $path]} {
-                    set f [open $path r]
-                    set command [string trim [read $f 256]]
-                    close $f
+                    set f ""
+                    if {[catch {
+                        set f [open $path r]
+                        set command [string trim [read $f 256]]
+                        close $f
+                        set f ""
+                    }]} {
+                        if {$f ne ""} {catch {close $f}}
+                        set command ""
+                    }
                 }
                 if {$command eq "SAVE_EXIT $::scheduler_id" && !$::scheduler_rejected} {
                     if {[catch {sigrity::save {!}} message]} {

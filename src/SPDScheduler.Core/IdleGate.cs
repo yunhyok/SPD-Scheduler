@@ -226,7 +226,7 @@ public sealed class IdleGate
         if (elapsed >= required) { _qualifiedBaseline = measuredBaseline; _qualifiedCurrent = current; }
         return elapsed >= required
             ? new(true, true, parallel.Length > 0 ? $"{parallel}판정 대상 {required}초 연속 저부하" : completed ? $"완료 전이 확인 · {required}초 연속 저부하 (외부 유휴 추정)" : $"유휴 추정 · {settings.IdleSeconds}초 연속 저부하 (오판 가능)")
-            : new(false, false, $"{parallel}판정 대상 관측 {elapsed:F0}/{settings.IdleSeconds}초 · CPU {cpu / processorCount:F2}% (전체)");
+            : new(false, false, $"{parallel}판정 대상 관측 {elapsed:F0}/{required}초 · CPU {cpu / processorCount:F2}% (전체)");
     }
 
     private static bool IsSimulationGui(ProcessIdentity identity) => IsPowerSi(identity) ||

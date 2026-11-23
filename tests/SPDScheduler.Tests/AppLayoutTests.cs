@@ -11,6 +11,8 @@ internal static class AppLayoutTests
     {
         yield return ("Long monitoring errors keep controls visible at simulated layout scales", MainWindowLayoutAsync);
         yield return ("Thread context menu persists per-job choices and protects active jobs", () => OnSta(CheckThreadMenu));
+        yield return ("Context menu and toolbar track selection state and reorder queued jobs", () => OnSta(CheckSelectionAndReorderMenu));
+        yield return ("Settings dialog keeps controls visible at simulated layout scales", () => OnSta(CheckSettingsDialogLayout));
     }
 
     private static Task MainWindowLayoutAsync() => OnSta(CheckMainWindowLayout);
@@ -134,6 +136,72 @@ internal static class AppLayoutTests
                     $"{scale:P0} scale at {form.Size}: toolbar needs {requiredWidth}px for one row and has {availableWidth}px");
                 if (size == form.MinimumSize)
                     Check.That(monitoring.Top > add.Top, "Toolbar should wrap at the minimum width");
+            }
+        }
+    }
+
+    private static void CheckSelectionAndReorderMenu()
+    {
+        using var rig = new TestRig();
+        rig.InitializeAsync().GetAwaiter().GetResult();
+        var first = rig.Add("alpha.spd");
+        var second = rig.Add("beta.spd");
+        using var form = new MainForm(rig.Engine, false, action => { action(); return Task.CompletedTask; },
+            () => Task.CompletedTask, rig.DirectoryPath);
+        var grid = Descendants(form).OfType<DataGridView>().Single();
+        var menu = grid.ContextMenuStrip!;
+        var moveUp = menu.Items.OfType<ToolStripMenuItem>().Single(item => item.Text!.StartsWith("순서 위로"));
+        var moveDown = menu.Items.OfType<ToolStripMenuItem>().Single(item => item.Text!.StartsWith("순서 아래로"));
+        var retry = menu.Items.OfType<ToolStripMenuItem>().Single(item => item.Text == "다시 대기");
+        var schedule = menu.Items.OfType<ToolStripMenuItem>().Single(item => item.Text!.StartsWith("예약 변경"));
+        var buttons = Descendants(form).OfType<Button>().ToArray();
+        var removeBtn = buttons.Single(button => button.Text == "제거");
+        var clearCompletedBtn = buttons.Single(button => button.Text == "완료 정리");
+        void OpenMenu() => typeof(ToolStripDropDown).GetMethod("OnOpening",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(menu, [new System.ComponentModel.CancelEventArgs()]);
+
+        grid.ClearSelection();
+        form.RefreshQueue();
+        OpenMenu();
+        Check.That(!removeBtn.Enabled && !clearCompletedBtn.Enabled && !schedule.Enabled && !retry.Enabled && !moveUp.Enabled && !moveDown.Enabled,
+            "Empty selection disables row-scoped actions");
+
+        grid.Rows[1].Selected = true;
+        OpenMenu();
+        Check.That(removeBtn.Enabled && schedule.Enabled && !retry.Enabled && moveUp.Enabled && !moveDown.Enabled,
+            "Second queued row enables move-up and schedule, disables move-down and retry");
+        moveUp.PerformClick();
+        form.RefreshQueue();
+        Check.Equal(second.Id, rig.Engine.Jobs[0].Id, "Move-up menu item moves the selected queued job to the top");
+
+        first.Status = JobStatus.Completed;
+        form.RefreshQueue();
+        Check.That(clearCompletedBtn.Enabled, "Completed jobs enable the clear-completed button");
+    }
+
+    private static void CheckSettingsDialogLayout()
+    {
+        using var rig = new TestRig();
+        foreach (float scale in new[] { 1F, 1.5F, 2F })
+        {
+            using var form = new SettingsForm(new AppSettings(), rig.DirectoryPath);
+            form.Scale(new SizeF(scale, scale));
+            _ = form.Handle;
+            var controls = Descendants(form).ToArray();
+            foreach (Control control in controls) _ = control.Handle;
+            form.PerformLayout();
+            Rectangle client = form.ClientRectangle;
+            var grid = controls.OfType<DataGridView>().Single();
+            Check.That(grid.Height >= (int)(100 * scale), $"{scale:P0} scale: rules grid should remain usable ({grid.Height}px)");
+            foreach (Control control in controls.OfType<Button>().Cast<Control>().Concat(controls.OfType<Label>()).Append(grid))
+            {
+                Rectangle bounds = control.Bounds;
+                for (Control parent = control.Parent!; parent != form; parent = parent.Parent!)
+                    bounds.Offset(parent.Location);
+                Check.That(bounds.Width > 0 && bounds.Height > 0 && client.Contains(bounds) &&
+                    control.Parent!.ClientRectangle.Contains(control.Bounds),
+                    $"SettingsForm {scale:P0} scale: {control.GetType().Name} ({control.Text[..Math.Min(control.Text.Length, 24)]}) bounds {bounds} outside {client}");
             }
         }
     }

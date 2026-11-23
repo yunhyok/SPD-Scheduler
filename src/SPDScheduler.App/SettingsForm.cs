@@ -20,41 +20,61 @@ internal sealed class SettingsForm : Form
 
     public SettingsForm(AppSettings current, string dataDirectory)
     {
+        SuspendLayout();
         Text = "SPD Scheduler 설정";
         Font = new Font("맑은 고딕", 9F);
-        ClientSize = new Size(760, 640);
+        ClientSize = new Size(780, 660);
         MinimumSize = new Size(740, 620);
         StartPosition = FormStartPosition.CenterParent;
+        AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
         MinimizeBox = false;
         MaximizeBox = false;
         BackColor = Color.FromArgb(246, 248, 251);
+
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), ColumnCount = 1, RowCount = 8 };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 74));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 111));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         Controls.Add(root);
-        root.Controls.Add(new Label { Text = "실행 파일 · 사용할 프로그램의 경로만 지정하세요", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, 0, 0);
-        var pathRows = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 2, Margin = Padding.Empty };
-        pathRows.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72));
+
+        root.Controls.Add(new Label
+        {
+            Text = "실행 파일 · 사용할 프로그램의 경로만 지정하세요",
+            AutoSize = true,
+            Font = new Font(Font, FontStyle.Bold),
+            Margin = new Padding(0, 0, 0, 6)
+        }, 0, 0);
+
+        var pathRows = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 4, RowCount = 2, Margin = Padding.Empty
+        };
+        pathRows.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         pathRows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        pathRows.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 77));
-        pathRows.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
-        pathRows.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        pathRows.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        pathRows.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        pathRows.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        pathRows.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        pathRows.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         executable.Text = current.PowerSiPath;
         powerDcExecutable.Text = current.PowerDcPath;
         AddExecutablePath(pathRows, executable, SimulationTool.PowerSI, 0);
         AddExecutablePath(pathRows, powerDcExecutable, SimulationTool.PowerDC, 1);
         root.Controls.Add(pathRows, 0, 1);
 
-        var thresholds = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 3, Margin = new Padding(0, 8, 0, 6) };
-        for (int row = 0; row < 3; row++) thresholds.RowStyles.Add(new RowStyle(SizeType.Percent, 100F / 3));
+        var thresholds = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 4, RowCount = 3, Margin = new Padding(0, 8, 0, 8)
+        };
+        for (int row = 0; row < 3; row++) thresholds.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         thresholds.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 31));
         thresholds.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 19));
         thresholds.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 31));
@@ -66,63 +86,127 @@ internal sealed class SettingsForm : Form
         timeout = AddNumber(thresholds, "시작 제한 시간 (분)", current.StartTimeoutMinutes, 1, 1440, 0, 2);
         polling = AddNumber(thresholds, "확인 간격 (분)", current.PollIntervalMinutes, 1, 60, 2, 2);
         root.Controls.Add(thresholds, 0, 2);
-        var bbsOptions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = Padding.Empty };
-        allowBbs = new CheckBox { Text = "외부 BbsCon 후처리 중 다음 시뮬레이션 허용", Checked = current.AllowBbsPostProcessing,
-            AutoSize = true, AccessibleName = "외부 BbsCon 후처리 동시 진행 허용" };
+
+        var bbsOptions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0, 0, 0, 8)
+        };
+        allowBbs = new CheckBox
+        {
+            Text = "외부 BbsCon 후처리 중 다음 시뮬레이션 허용",
+            Checked = current.AllowBbsPostProcessing,
+            AutoSize = true,
+            AccessibleName = "외부 BbsCon 후처리 동시 진행 허용"
+        };
         bbsOptions.Controls.Add(allowBbs);
-        bbsOptions.Controls.Add(new Label { Text = "BbsCon은 그대로 유지합니다. 자체 실행 작업은 저장·정리가 끝나야 다음 작업을 시작합니다.", AutoSize = true, ForeColor = Color.DimGray });
+        bbsOptions.Controls.Add(new Label
+        {
+            Text = "BbsCon은 그대로 유지합니다. 자체 실행 작업은 저장·정리가 끝나야 다음 작업을 시작합니다.",
+            AutoSize = true,
+            ForeColor = Color.DimGray,
+            Margin = new Padding(2, 2, 0, 0)
+        });
         root.Controls.Add(bbsOptions, 0, 3);
+
         root.Controls.Add(new Label
         {
             Text = "고급 · 작업별 판정 규칙 (정규식)\nSPD 패턴은 파일의 각 줄에서 평가합니다. 모든 패턴은 기본적으로 대소문자를 구분합니다.\n시작·완료 패턴을 실제 로그에 맞추세요. 대소문자를 무시하려면 (?i)를 붙이세요.",
-            Dock = DockStyle.Fill, ForeColor = Color.FromArgb(65, 79, 98), Margin = new Padding(0, 5, 0, 0)
+            AutoSize = true,
+            ForeColor = Color.FromArgb(65, 79, 98),
+            Margin = new Padding(0, 2, 0, 6)
         }, 0, 4);
+
         rules = new DataGridView
         {
-            Dock = DockStyle.Fill, BackgroundColor = Color.White, BorderStyle = BorderStyle.FixedSingle,
+            Dock = DockStyle.Fill, MinimumSize = new Size(0, 130),
+            BackgroundColor = Color.White, BorderStyle = BorderStyle.FixedSingle,
             AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersWidth = 24,
             AllowUserToResizeRows = false, SelectionMode = DataGridViewSelectionMode.CellSelect,
-            AccessibleName = "작업별 PowerSI/PowerDC 완료 판정 규칙", ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText
+            AccessibleName = "작업별 PowerSI/PowerDC 완료 판정 규칙",
+            ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText
         };
         rules.Columns.Add(new DataGridViewTextBoxColumn { Name = "Workflow", HeaderText = "작업 이름", FillWeight = 22 });
         rules.Columns.Add(new DataGridViewTextBoxColumn { Name = "SPD", HeaderText = "SPD 내용 패턴", FillWeight = 26 });
         rules.Columns.Add(new DataGridViewTextBoxColumn { Name = "Started", HeaderText = "시작 패턴 (필수)", FillWeight = 26 });
         rules.Columns.Add(new DataGridViewTextBoxColumn { Name = "Completed", HeaderText = "완료 표시 패턴", FillWeight = 26 });
-        rules.Columns.Add(new DataGridViewComboBoxColumn { Name = "Tool", HeaderText = "프로그램", FillWeight = 20,
-            DataSource = Enum.GetValues<SimulationTool>(), ValueType = typeof(SimulationTool) });
+        rules.Columns.Add(new DataGridViewComboBoxColumn
+        {
+            Name = "Tool", HeaderText = "프로그램", FillWeight = 20,
+            DataSource = Enum.GetValues<SimulationTool>(), ValueType = typeof(SimulationTool)
+        });
         rules.Columns[4].DisplayIndex = 0;
         rules.DefaultValuesNeeded += (_, e) => e.Row.Cells[4].Value = SimulationTool.PowerSI;
-        foreach (CompletionRule rule in current.CompletionRules) rules.Rows.Add(rule.Workflow, rule.SpdPattern, rule.StartedPattern, rule.CompletedPattern, rule.Tool);
+        rules.DataError += (_, e) => { e.ThrowException = false; };
+        foreach (CompletionRule rule in current.CompletionRules)
+            rules.Rows.Add(rule.Workflow, rule.SpdPattern, rule.StartedPattern, rule.CompletedPattern, rule.Tool);
         root.Controls.Add(rules, 0, 5);
-        var location = new TextBox { Text = "저장 폴더: " + dataDirectory, ReadOnly = true, BorderStyle = BorderStyle.None, BackColor = BackColor, Dock = DockStyle.Fill, Margin = new Padding(0, 10, 0, 0), AccessibleName = "설정 및 대기열 저장 폴더" };
-        root.Controls.Add(location, 0, 6);
-        var actions = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty };
-        var cancel = new Button { Text = "취소", DialogResult = DialogResult.Cancel, Size = new Size(80, 30) };
-        var save = new Button { Text = "저장", Size = new Size(80, 30) };
-        var deleteRule = new Button { Text = "선택 규칙 삭제", AutoSize = true, Height = 30 };
+
+        var locationRow = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2, Margin = new Padding(0, 8, 0, 6)
+        };
+        locationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        locationRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var location = new TextBox
+        {
+            Text = "저장 폴더: " + dataDirectory, ReadOnly = true, BorderStyle = BorderStyle.None,
+            BackColor = BackColor, Dock = DockStyle.Fill, Anchor = AnchorStyles.Left | AnchorStyles.Right,
+            Margin = new Padding(0, 5, 8, 0), AccessibleName = "설정 및 대기열 저장 폴더"
+        };
+        var openDataFolder = new Button { Text = "폴더 열기", AutoSize = true, MinimumSize = new Size(76, 26), Padding = new Padding(6, 0, 6, 0), Margin = Padding.Empty };
+        openDataFolder.Click += (_, _) =>
+        {
+            if (!Directory.Exists(dataDirectory)) return;
+            try
+            {
+                using var folder = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(dataDirectory) { UseShellExecute = true });
+            }
+            catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
+            {
+                MessageBox.Show(this, $"저장 폴더를 열지 못했습니다.\n{ex.Message}", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        };
+        locationRow.Controls.Add(location, 0, 0);
+        locationRow.Controls.Add(openDataFolder, 1, 0);
+        root.Controls.Add(locationRow, 0, 6);
+
+        var actions = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill,
+            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = Padding.Empty
+        };
+        var cancel = new Button { Text = "취소", DialogResult = DialogResult.Cancel, AutoSize = true, MinimumSize = new Size(80, 30) };
+        var save = new Button { Text = "저장", AutoSize = true, MinimumSize = new Size(80, 30) };
+        var deleteRule = new Button { Text = "선택 규칙 삭제", AutoSize = true, MinimumSize = new Size(100, 30) };
         deleteRule.Click += (_, _) =>
         {
-            foreach (DataGridViewRow row in rules.SelectedCells.Cast<DataGridViewCell>().Select(c => c.OwningRow).OfType<DataGridViewRow>().Distinct().Where(r => !r.IsNewRow).ToArray()) rules.Rows.Remove(row);
+            foreach (DataGridViewRow row in rules.SelectedCells.Cast<DataGridViewCell>().Select(c => c.OwningRow).OfType<DataGridViewRow>().Distinct().Where(r => !r.IsNewRow).ToArray())
+                rules.Rows.Remove(row);
         };
         save.Click += (_, _) => SaveSettings();
         actions.Controls.AddRange([cancel, save, deleteRule]);
         root.Controls.Add(actions, 0, 7);
         AcceptButton = save;
         CancelButton = cancel;
+        ResumeLayout();
     }
 
     private void AddExecutablePath(TableLayoutPanel panel, TextBox input, SimulationTool tool, int row)
     {
-        panel.Controls.Add(new Label { Text = tool.ToString(), AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 3, 7) }, 0, row);
+        input.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        input.Margin = new Padding(0, 2, 0, 6);
+        panel.Controls.Add(new Label { Text = tool.ToString(), AutoSize = true, MinimumSize = new Size(64, 0), Anchor = AnchorStyles.Left, Margin = new Padding(0, 2, 6, 6) }, 0, row);
         panel.Controls.Add(input, 1, row);
-        var browse = new Button { Text = "찾아보기", Dock = DockStyle.Fill, Margin = new Padding(6, 0, 0, 7), AccessibleName = tool + " 실행 파일 찾아보기" };
+        var browse = new Button { Text = "찾아보기", AutoSize = true, MinimumSize = new Size(76, 26), Padding = new Padding(6, 0, 6, 0), Margin = new Padding(6, 0, 0, 6), AccessibleName = tool + " 실행 파일 찾아보기" };
         browse.Click += (_, _) =>
         {
             using var picker = new OpenFileDialog { Filter = tool + " 실행 파일 (*.exe)|*.exe", Title = tool + " 실행 파일 선택", CheckFileExists = true };
             if (picker.ShowDialog(this) == DialogResult.OK) input.Text = picker.FileName;
         };
         panel.Controls.Add(browse, 2, row);
-        var discover = new Button { Text = "자동 찾기", Dock = DockStyle.Fill, Margin = new Padding(6, 0, 0, 7), AccessibleName = tool + " 자동 찾기" };
+        var discover = new Button { Text = "자동 찾기", AutoSize = true, MinimumSize = new Size(76, 26), Padding = new Padding(6, 0, 6, 0), Margin = new Padding(6, 0, 0, 6), AccessibleName = tool + " 자동 찾기" };
         discover.Click += (_, _) =>
         {
             try
@@ -138,8 +222,8 @@ internal sealed class SettingsForm : Form
 
     private static NumericUpDown AddNumber(TableLayoutPanel panel, string label, decimal value, decimal minimum, decimal maximum, int column, int row, int decimals = 0)
     {
-        panel.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(column == 0 ? 0 : 14, 2, 3, 2) }, column, row);
-        var input = new NumericUpDown { Minimum = minimum, Maximum = maximum, DecimalPlaces = decimals, Value = Math.Clamp(value, minimum, maximum), Anchor = AnchorStyles.Left | AnchorStyles.Right, Margin = new Padding(0, 2, 0, 2), AccessibleName = label };
+        panel.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(column == 0 ? 0 : 14, 4, 4, 4) }, column, row);
+        var input = new NumericUpDown { Minimum = minimum, Maximum = maximum, DecimalPlaces = decimals, Value = Math.Clamp(value, minimum, maximum), Anchor = AnchorStyles.Left | AnchorStyles.Right, Margin = new Padding(0, 3, 0, 3), AccessibleName = label };
         panel.Controls.Add(input, column + 1, row);
         return input;
     }
