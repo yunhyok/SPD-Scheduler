@@ -190,18 +190,28 @@ internal static class AppLayoutTests
             _ = form.Handle;
             var controls = Descendants(form).ToArray();
             foreach (Control control in controls) _ = control.Handle;
-            form.PerformLayout();
-            Rectangle client = form.ClientRectangle;
             var grid = controls.OfType<DataGridView>().Single();
-            Check.That(grid.Height >= (int)(100 * scale), $"{scale:P0} scale: rules grid should remain usable ({grid.Height}px)");
-            foreach (Control control in controls.OfType<Button>().Cast<Control>().Concat(controls.OfType<Label>()).Append(grid))
+            var sizes = scale == 2F
+                ? new[] { form.Size, new Size(Math.Min(form.Width, 1024), Math.Min(form.Height, 768)) }
+                : new[] { form.Size, form.MinimumSize };
+            foreach (Size size in sizes)
             {
-                Rectangle bounds = control.Bounds;
-                for (Control parent = control.Parent!; parent != form; parent = parent.Parent!)
-                    bounds.Offset(parent.Location);
-                Check.That(bounds.Width > 0 && bounds.Height > 0 && client.Contains(bounds) &&
-                    control.Parent!.ClientRectangle.Contains(control.Bounds),
-                    $"SettingsForm {scale:P0} scale: {control.GetType().Name} ({control.Text[..Math.Min(control.Text.Length, 24)]}) bounds {bounds} outside {client}");
+                if (size.Width < form.MinimumSize.Width || size.Height < form.MinimumSize.Height)
+                    form.MinimumSize = Size.Empty;
+                form.Size = size;
+                form.PerformLayout();
+                Rectangle client = form.ClientRectangle;
+                Check.That(grid.Height >= grid.ColumnHeadersHeight + 2 * grid.RowTemplate.Height,
+                    $"SettingsForm {scale:P0} scale at {size}: rules grid should remain usable ({grid.Height}px)");
+                foreach (Control control in controls.OfType<Button>().Cast<Control>().Concat(controls.OfType<Label>()).Append(grid))
+                {
+                    Rectangle bounds = control.Bounds;
+                    for (Control parent = control.Parent!; parent != form; parent = parent.Parent!)
+                        bounds.Offset(parent.Location);
+                    Check.That(bounds.Width > 0 && bounds.Height > 0 && client.Contains(bounds) &&
+                        control.Parent!.ClientRectangle.Contains(control.Bounds),
+                        $"SettingsForm {scale:P0} scale at {size}: {control.GetType().Name} ({control.Text[..Math.Min(control.Text.Length, 24)]}) bounds {bounds} outside {client}");
+                }
             }
         }
     }

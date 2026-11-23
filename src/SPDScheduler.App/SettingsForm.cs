@@ -23,8 +23,8 @@ internal sealed class SettingsForm : Form
         SuspendLayout();
         Text = "SPD Scheduler 설정";
         Font = new Font("맑은 고딕", 9F);
-        ClientSize = new Size(780, 660);
-        MinimumSize = new Size(740, 620);
+        ClientSize = new Size(760, 620);
+        MinimumSize = new Size(680, 540);
         StartPosition = FormStartPosition.CenterParent;
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -32,7 +32,7 @@ internal sealed class SettingsForm : Form
         MaximizeBox = false;
         BackColor = Color.FromArgb(246, 248, 251);
 
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), ColumnCount = 1, RowCount = 8 };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14), ColumnCount = 1, RowCount = 8 };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -72,7 +72,7 @@ internal sealed class SettingsForm : Form
         var thresholds = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 4, RowCount = 3, Margin = new Padding(0, 8, 0, 8)
+            ColumnCount = 4, RowCount = 3, Margin = new Padding(0, 4, 0, 4)
         };
         for (int row = 0; row < 3; row++) thresholds.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         thresholds.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 31));
@@ -90,7 +90,7 @@ internal sealed class SettingsForm : Form
         var bbsOptions = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0, 0, 0, 8)
+            FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0, 0, 0, 4)
         };
         allowBbs = new CheckBox
         {
@@ -119,7 +119,7 @@ internal sealed class SettingsForm : Form
 
         rules = new DataGridView
         {
-            Dock = DockStyle.Fill, MinimumSize = new Size(0, 130),
+            Dock = DockStyle.Fill,
             BackgroundColor = Color.White, BorderStyle = BorderStyle.FixedSingle,
             AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersWidth = 24,
             AllowUserToResizeRows = false, SelectionMode = DataGridViewSelectionMode.CellSelect,
