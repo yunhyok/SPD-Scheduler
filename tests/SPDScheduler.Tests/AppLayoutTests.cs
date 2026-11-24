@@ -12,6 +12,7 @@ internal static class AppLayoutTests
         yield return ("Long monitoring errors keep controls visible at simulated layout scales", MainWindowLayoutAsync);
         yield return ("Thread context menu persists per-job choices and protects active jobs", () => OnSta(CheckThreadMenu));
         yield return ("Context menu and toolbar track selection state and reorder queued jobs", () => OnSta(CheckSelectionAndReorderMenu));
+        yield return ("Visible empty grid handles adding first files without null-tag selection errors", () => OnSta(CheckVisibleEmptyGridAdd));
         yield return ("Settings dialog keeps controls visible at simulated layout scales", () => OnSta(CheckSettingsDialogLayout));
     }
 
@@ -178,6 +179,40 @@ internal static class AppLayoutTests
         first.Status = JobStatus.Completed;
         form.RefreshQueue();
         Check.That(clearCompletedBtn.Enabled, "Completed jobs enable the clear-completed button");
+    }
+
+    private static void CheckVisibleEmptyGridAdd()
+    {
+        using var rig = new TestRig();
+        rig.InitializeAsync().GetAwaiter().GetResult();
+        using var form = new MainForm(rig.Engine, false, action => { action(); return Task.CompletedTask; },
+            () => Task.CompletedTask, rig.DirectoryPath);
+        form.ShowInTaskbar = false;
+        form.StartPosition = FormStartPosition.Manual;
+        form.Location = new Point(-32000, -32000);
+        form.Show();
+        try
+        {
+            var grid = Descendants(form).OfType<DataGridView>().Single();
+            Check.Equal(0, grid.Rows.Count, "Starts empty while visible");
+            var first = rig.Add("first-drop.spd");
+            form.RefreshQueue();
+            Check.Equal(1, grid.Rows.Count, "Adding first file to a visible empty grid must not fail on SelectionChanged");
+            Check.Equal(first.Id, (Guid)grid.Rows[0].Tag!, "Row tag is populated");
+            var second = rig.Add("second-drop.spd");
+            form.RefreshQueue();
+            Check.Equal(2, grid.Rows.Count, "Adding subsequent files succeeds");
+            grid.ClearSelection();
+            grid.Rows[1].Selected = true;
+            rig.Engine.Remove(first.Id);
+            form.RefreshQueue();
+            Check.Equal(1, grid.Rows.Count, "Removing row updates visible grid cleanly");
+            Check.Equal(second.Id, (Guid)grid.Rows[0].Tag!, "Remaining row preserves its tag");
+        }
+        finally
+        {
+            form.CloseForExit();
+        }
     }
 
     private static void CheckSettingsDialogLayout()

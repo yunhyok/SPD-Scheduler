@@ -4,7 +4,7 @@
 
 Windows 트레이에서 PowerSI·PowerDC SPD 파일의 순차 실행과 예약 실행을 관리합니다. C# WinForms / .NET 10, Windows 10·11 x64를 대상으로 합니다.
 
-**현재 버전 v0.2.7.** [GitHub Releases](https://github.com/yunhyok/SPD-Scheduler/releases/latest)에서 Windows x64 설치 파일과 포터블 ZIP을 제공합니다. PowerDC 2025.1의 단일 보드 IR Drop에서는 영문 파일명으로 실행·결과 저장·종료를 확인했습니다. 시험 조건과 다른 모드의 검증 범위는 [검증 기록](docs/VALIDATION.md)에 정리했습니다.
+**현재 버전 v0.2.8.** [GitHub Releases](https://github.com/yunhyok/SPD-Scheduler/releases/latest)에서 Windows x64 설치 파일과 포터블 ZIP을 제공합니다. PowerDC 2025.1의 단일 보드 IR Drop에서는 영문 파일명으로 실행·결과 저장·종료를 확인했습니다. 시험 조건과 다른 모드의 검증 범위는 [검증 기록](docs/VALIDATION.md)에 정리했습니다.
 
 ## 사용법
 

@@ -37,6 +37,7 @@ internal sealed class MainForm : Form
     private readonly ToolTip toolTip = new() { AutoPopDelay = 12_000, InitialDelay = 400, ReshowDelay = 200 };
     private string queueSignature = "";
     private bool checkPending;
+    private bool refreshingGrid;
     private bool closeForExit;
 
     public MainForm(SchedulerEngine engine, bool safeMode, Func<Action, Task> command, Func<Task> checkNow, string dataDirectory)
@@ -135,11 +136,11 @@ internal sealed class MainForm : Form
         foreach (SimulationTool tool in Enum.GetValues<SimulationTool>())
         {
             var item = new ToolStripMenuItem(tool.ToString()) { Tag = tool };
-            item.Click += async (_, _) =>
+            item.Click += (_, _) => RunUiAsync(async () =>
             {
                 if (checkPending) { ShowError("상태 확인 중입니다. 확인이 끝난 뒤 실행 프로그램을 변경하세요."); return; }
                 await SelectedCommandAsync(id => engine.SetTool(id, tool));
-            };
+            });
             executionTool.DropDownItems.Add(item);
         }
         rowMenu.Items.Add(executionTool);
@@ -147,18 +148,18 @@ internal sealed class MainForm : Form
         foreach (int threadCount in new[] { 16, 24, 32, 48, 64 })
         {
             var item = new ToolStripMenuItem(threadCount == 64 ? "64 스레드 (기본·최대)" : $"{threadCount} 스레드") { Tag = threadCount };
-            item.Click += async (_, _) =>
+            item.Click += (_, _) => RunUiAsync(async () =>
             {
                 if (checkPending) { ShowError("상태 확인 중입니다. 확인이 끝난 뒤 스레드 수를 변경하세요."); return; }
                 await SelectedCommandAsync(id => engine.SetThreadCount(id, threadCount));
-            };
+            });
             resources.DropDownItems.Add(item);
         }
         rowMenu.Items.Add(resources);
         var moveUp = new ToolStripMenuItem("순서 위로 (Alt+↑)") { Enabled = false };
-        moveUp.Click += async (_, _) => await MoveSelectedAsync(-1);
+        moveUp.Click += (_, _) => RunUiAsync(() => MoveSelectedAsync(-1));
         var moveDown = new ToolStripMenuItem("순서 아래로 (Alt+↓)") { Enabled = false };
-        moveDown.Click += async (_, _) => await MoveSelectedAsync(1);
+        moveDown.Click += (_, _) => RunUiAsync(() => MoveSelectedAsync(1));
         rowMenu.Items.Add(moveUp);
         rowMenu.Items.Add(moveDown);
         rowMenu.Items.Add(new ToolStripSeparator());
@@ -168,17 +169,17 @@ internal sealed class MainForm : Form
         string? logDirectory = null;
         var openLogs = new ToolStripMenuItem("로그 폴더 열기") { Enabled = false };
         var scheduleItem = new ToolStripMenuItem("예약 변경 (F2)") { Enabled = false };
-        scheduleItem.Click += async (_, _) => await ScheduleAsync();
+        scheduleItem.Click += (_, _) => RunUiAsync(ScheduleAsync);
         var clearScheduleItem = new ToolStripMenuItem("예약 해제") { Enabled = false };
-        clearScheduleItem.Click += async (_, _) => await SelectedCommandAsync(id => engine.SetSchedule(id, null));
+        clearScheduleItem.Click += (_, _) => RunUiAsync(() => SelectedCommandAsync(id => engine.SetSchedule(id, null)));
         var retryItem = new ToolStripMenuItem("다시 대기") { Enabled = false };
-        retryItem.Click += async (_, _) => await SelectedCommandAsync(engine.Retry);
+        retryItem.Click += (_, _) => RunUiAsync(() => SelectedCommandAsync(engine.Retry));
         var skipItem = new ToolStripMenuItem("건너뛰기") { Enabled = false };
-        skipItem.Click += async (_, _) => await SelectedCommandAsync(engine.Skip);
+        skipItem.Click += (_, _) => RunUiAsync(() => SelectedCommandAsync(engine.Skip));
         var manualComplete = new ToolStripMenuItem("수동 완료 처리…") { Enabled = false };
-        manualComplete.Click += async (_, _) => await ReconcileSelectionAsync(remove: false);
+        manualComplete.Click += (_, _) => RunUiAsync(() => ReconcileSelectionAsync(remove: false));
         var removeItem = new ToolStripMenuItem("제거 (Delete)") { Enabled = false };
-        removeItem.Click += async (_, _) => await ReconcileSelectionAsync(remove: true);
+        removeItem.Click += (_, _) => RunUiAsync(() => ReconcileSelectionAsync(remove: true));
         rowMenu.Items.Add(openLogs);
         rowMenu.Items.Add(new ToolStripSeparator());
         rowMenu.Items.Add(scheduleItem);
@@ -218,7 +219,7 @@ internal sealed class MainForm : Form
         };
         openLogs.Click += (_, _) => OpenDirectory(logDirectory, "로그 폴더");
         grid.ContextMenuStrip = rowMenu;
-        grid.SelectionChanged += (_, _) => UpdateSelectionActionStates();
+        grid.SelectionChanged += (_, _) => { if (!refreshingGrid) UpdateSelectionActionStates(); };
         grid.CellMouseDown += (_, e) =>
         {
             if (e.Button == MouseButtons.Right && e.RowIndex >= 0 && !grid.Rows[e.RowIndex].Selected)
@@ -228,37 +229,37 @@ internal sealed class MainForm : Form
                 grid.CurrentCell = grid.Rows[e.RowIndex].Cells[0];
             }
         };
-        grid.CellDoubleClick += async (_, e) =>
+        grid.CellDoubleClick += (_, e) =>
         {
             if (e.RowIndex < 0) return;
             if (e.ColumnIndex is 0 or 1 && grid.Rows[e.RowIndex].Tag is Guid id) ShowJobDetails(id);
-            else if (e.ColumnIndex == 2) await ScheduleAsync();
+            else if (e.ColumnIndex == 2) RunUiAsync(ScheduleAsync);
             else if (e.ColumnIndex is 3 or 4) rowMenu.Show(grid, grid.PointToClient(Cursor.Position));
         };
         DragEnter += (_, e) => e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
-        DragDrop += async (_, e) =>
+        DragDrop += (_, e) =>
         {
-            if (e.Data?.GetData(DataFormats.FileDrop) is string[] paths) await AddPathsAsync(paths);
+            if (e.Data?.GetData(DataFormats.FileDrop) is string[] paths) RunUiAsync(() => AddPathsAsync(paths));
         };
         grid.DragEnter += (_, e) => e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
-        grid.DragDrop += async (_, e) =>
+        grid.DragDrop += (_, e) =>
         {
-            if (e.Data?.GetData(DataFormats.FileDrop) is string[] paths) await AddPathsAsync(paths);
+            if (e.Data?.GetData(DataFormats.FileDrop) is string[] paths) RunUiAsync(() => AddPathsAsync(paths));
         };
         grid.AllowDrop = true;
         FormClosing += (_, e) => { if (!closeForExit && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); } };
         Resize += (_, _) => { if (WindowState == FormWindowState.Minimized) Hide(); };
-        KeyDown += async (_, e) =>
+        KeyDown += (_, e) =>
         {
-            if (e.Control && e.KeyCode == Keys.O) { e.SuppressKeyPress = true; await AddFilesAsync(); }
+            if (e.Control && e.KeyCode == Keys.O) { e.SuppressKeyPress = true; RunUiAsync(AddFilesAsync); }
             else if (e.Control && e.KeyCode == Keys.C) { e.SuppressKeyPress = true; CopyPaths(); }
             else if (e.Control && e.KeyCode == Keys.A) { e.SuppressKeyPress = true; grid.SelectAll(); }
-            else if (e.Alt && e.KeyCode == Keys.Up) { e.SuppressKeyPress = true; await MoveSelectedAsync(-1); }
-            else if (e.Alt && e.KeyCode == Keys.Down) { e.SuppressKeyPress = true; await MoveSelectedAsync(1); }
+            else if (e.Alt && e.KeyCode == Keys.Up) { e.SuppressKeyPress = true; RunUiAsync(() => MoveSelectedAsync(-1)); }
+            else if (e.Alt && e.KeyCode == Keys.Down) { e.SuppressKeyPress = true; RunUiAsync(() => MoveSelectedAsync(1)); }
             else if (e.KeyCode == Keys.Enter && SelectedIds().Take(2).ToArray() is [var selectedId]) { e.SuppressKeyPress = true; ShowJobDetails(selectedId); }
-            else if (e.KeyCode == Keys.Delete) { e.SuppressKeyPress = true; await ReconcileSelectionAsync(remove: true); }
-            else if (e.KeyCode == Keys.F2) { e.SuppressKeyPress = true; await ScheduleAsync(); }
-            else if (e.KeyCode == Keys.F5 && this.checkNow.Enabled) { e.SuppressKeyPress = true; await checkNowAction(); }
+            else if (e.KeyCode == Keys.Delete) { e.SuppressKeyPress = true; RunUiAsync(() => ReconcileSelectionAsync(remove: true)); }
+            else if (e.KeyCode == Keys.F2) { e.SuppressKeyPress = true; RunUiAsync(ScheduleAsync); }
+            else if (e.KeyCode == Keys.F5 && this.checkNow.Enabled) { e.SuppressKeyPress = true; RunUiAsync(checkNowAction); }
             else if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; Hide(); }
         };
         ResumeLayout();
@@ -352,27 +353,35 @@ internal sealed class MainForm : Form
         queueSignature = signature;
         HashSet<Guid> selected = SelectedIds().ToHashSet();
         int scroll = grid.FirstDisplayedScrollingRowIndex;
-        grid.Rows.Clear();
-        foreach (JobItem job in engine.Jobs)
+        refreshingGrid = true;
+        try
         {
-            int rowIndex = grid.Rows.Add(job.FileName, StatusName(job), job.ScheduledAt?.ToLocalTime().ToString("MM-dd HH:mm") ?? "순서대로", job.Tool, job.ThreadCount);
-            DataGridViewRow row = grid.Rows[rowIndex];
-            row.Tag = job.Id;
-            row.Cells[0].ToolTipText = job.FilePath;
-            row.Cells[1].ToolTipText = $"{job.LastError ?? StatusName(job)}\n로그 폴더: {LogDirectory(job)}\n두 번 클릭하거나 Enter를 누르면 작업 상세를 볼 수 있습니다.";
-            row.Cells[2].ToolTipText = job.ScheduledAt is { } at ? $"{at.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz} ({job.ScheduleTimeZone ?? TimeZoneInfo.Local.Id})" : "예약 없이 대기 순서에 따라 실행";
-            row.Cells[3].ToolTipText = "기본 PowerSI · 대기 작업만 우클릭 → 실행 프로그램에서 변경할 수 있습니다.";
-            row.Cells[4].ToolTipText = $"설정: {job.ThreadCount} 스레드 · 다음 시뮬레이션 시작 전에 적용\n대기 작업만 우클릭 → 리소스 사용 (스레드)에서 변경할 수 있습니다.\n실제 CPU 점유율을 고정하는 설정은 아닙니다.";
-            row.Selected = selected.Contains(job.Id);
-            row.Cells[1].Style.ForeColor = job.Status switch
+            grid.Rows.Clear();
+            foreach (JobItem job in engine.Jobs)
             {
-                JobStatus.Completed => SuccessColor,
-                JobStatus.Failed or JobStatus.NeedsAttention => DangerColor,
-                JobStatus.Starting or JobStatus.Running or JobStatus.Saving => FocusColor,
-                _ => MutedTextColor
-            };
+                int rowIndex = grid.Rows.Add(job.FileName, StatusName(job), job.ScheduledAt?.ToLocalTime().ToString("MM-dd HH:mm") ?? "순서대로", job.Tool, job.ThreadCount);
+                DataGridViewRow row = grid.Rows[rowIndex];
+                row.Tag = job.Id;
+                row.Cells[0].ToolTipText = job.FilePath;
+                row.Cells[1].ToolTipText = $"{job.LastError ?? StatusName(job)}\n로그 폴더: {LogDirectory(job)}\n두 번 클릭하거나 Enter를 누르면 작업 상세를 볼 수 있습니다.";
+                row.Cells[2].ToolTipText = job.ScheduledAt is { } at ? $"{at.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz} ({job.ScheduleTimeZone ?? TimeZoneInfo.Local.Id})" : "예약 없이 대기 순서에 따라 실행";
+                row.Cells[3].ToolTipText = "기본 PowerSI · 대기 작업만 우클릭 → 실행 프로그램에서 변경할 수 있습니다.";
+                row.Cells[4].ToolTipText = $"설정: {job.ThreadCount} 스레드 · 다음 시뮬레이션 시작 전에 적용\n대기 작업만 우클릭 → 리소스 사용 (스레드)에서 변경할 수 있습니다.\n실제 CPU 점유율을 고정하는 설정은 아닙니다.";
+                row.Selected = selected.Contains(job.Id);
+                row.Cells[1].Style.ForeColor = job.Status switch
+                {
+                    JobStatus.Completed => SuccessColor,
+                    JobStatus.Failed or JobStatus.NeedsAttention => DangerColor,
+                    JobStatus.Starting or JobStatus.Running or JobStatus.Saving => FocusColor,
+                    _ => MutedTextColor
+                };
+            }
+            if (scroll >= 0 && grid.Rows.Count > 0) grid.FirstDisplayedScrollingRowIndex = Math.Min(scroll, grid.Rows.Count - 1);
         }
-        if (scroll >= 0 && grid.Rows.Count > 0) grid.FirstDisplayedScrollingRowIndex = Math.Min(scroll, grid.Rows.Count - 1);
+        finally
+        {
+            refreshingGrid = false;
+        }
         grid.ResetMarquee();
         UpdateSelectionActionStates();
     }
@@ -450,19 +459,34 @@ internal sealed class MainForm : Form
         if (!CanMoveQueued(ids[0], direction)) return;
         await command(() => engine.MoveQueued(ids[0], direction));
         if (IsDisposed) return;
-        grid.ClearSelection();
-        foreach (DataGridViewRow row in grid.Rows)
+        refreshingGrid = true;
+        try
         {
-            if (row.Tag is Guid rowId && rowId == ids[0])
+            grid.ClearSelection();
+            foreach (DataGridViewRow row in grid.Rows)
             {
-                row.Selected = true;
-                grid.CurrentCell = row.Cells[0];
-                break;
+                if (row.Tag is Guid rowId && rowId == ids[0])
+                {
+                    row.Selected = true;
+                    grid.CurrentCell = row.Cells[0];
+                    break;
+                }
             }
         }
+        finally { refreshingGrid = false; }
+        UpdateSelectionActionStates();
     }
 
-    private IEnumerable<Guid> SelectedIds() => grid.SelectedRows.Cast<DataGridViewRow>().OrderBy(r => r.Index).Select(r => (Guid)r.Tag!);
+    private IEnumerable<Guid> SelectedIds() => grid.SelectedRows.Cast<DataGridViewRow>()
+        .OrderBy(r => r.Index)
+        .Select(r => r.Tag)
+        .OfType<Guid>();
+
+    private async void RunUiAsync(Func<Task> action)
+    {
+        try { await action(); }
+        catch (Exception ex) { if (!IsDisposed) ShowError(ex.Message); }
+    }
 
     private string LogDirectory(JobItem job)
     {
